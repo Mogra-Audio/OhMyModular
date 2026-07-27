@@ -27,13 +27,11 @@ static constexpr double CHAOS_INJ_ANGLE = 0.8;
 static constexpr double CHAOS_INJ_MOM = 6.0;
 static constexpr double P_MAX = 25.0;
 static constexpr int GHOST_SUBSTEPS_MAX = 5;
+static constexpr int BLEND_FRAMES = 256;
 
 // SKEW mass smoothing
 static constexpr double MASS_SMOOTH_ALPHA = 0.05;
 static constexpr double MASS_EPS = 1e-10;
-
-// Chaos crossfade on disable
-static constexpr int BLEND_FRAMES = 256;
 
 // SVG link dimensions
 static constexpr float LINK_W_MM = 1.162f;
@@ -113,24 +111,24 @@ struct OhMyPendulum : Module {
     OhMyPendulum() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
 
+        /// PARAMs CFG
         configParam(PARAM_ANGLE1, 0.f, 1.f, 0.f, "Angle I", "°", 0.f, 360.f, 0.f);
         configParam(PARAM_ANGLE2, 0.f, 1.f, 0.f, "Angle II", "°", 0.f, 360.f, 0.f);
-        paramQuantities[PARAM_ANGLE1]->displayPrecision = 6;
-        paramQuantities[PARAM_ANGLE2]->displayPrecision = 6;
-
+        /**/paramQuantities[PARAM_ANGLE1]->displayPrecision = 6;
+        /**/paramQuantities[PARAM_ANGLE2]->displayPrecision = 6;
         configParam(PARAM_TIME, 0.f, 1.f, 0.5f, "Time");
         configParam(PARAM_SKEW, 0.f, 1.f, 0.5f, "Skew");
         configParam(PARAM_CHAOS, 0.f, 1.f, 0.f, "Chaos");
 
+        /// I/O CFG
         configInput(INPUT_1_RETRIG, "Retrigger");
         configInput(INPUT_2_CHAOS, "Chaos CV");
-
         configOutput(OUTPUT_1, "Angle I (Smooth)");
         configOutput(OUTPUT_2, "Angle I (Discrete)");
         configOutput(OUTPUT_3, "Angle II (Discrete)");
         configOutput(OUTPUT_4, "Angle II (Smooth)");
     }
-
+    /// HAMILTONIAN FORMALISM FORMULATION
     void computeDerivatives(double th1, double th2, double p1, double p2,
                             double m1, double m2, double timeScale,
                             double& dTh1, double& dTh2, double& dP1, double& dP2) {
@@ -156,7 +154,7 @@ struct OhMyPendulum : Module {
         dP1 = (-coupling - (m1 + m2) * G * L1 * sin1) * timeScale;
         dP2 = ( coupling - m2 * G * L2 * sin2) * timeScale;
     }
-
+    /// RK4 INTEGRATION
     void rk4StepState(double& th1, double& th2, double& p1, double& p2,
                       double dt, double m1, double m2, double timeScale) {
         double dT1_1, dT2_1, dP1_1, dP2_1;
@@ -183,6 +181,7 @@ struct OhMyPendulum : Module {
         p2  += dt * (dP2_1 + 2.0*dP2_2 + 2.0*dP2_3 + dP2_4) / 6.0;
     }
 
+    /// GHOST STEP
     void stepGhost(double dt, double m1, double m2, int substeps) {
         double gdt = dt / (double)substeps;
         for (int i = 0; i < substeps; i++) {
@@ -191,6 +190,7 @@ struct OhMyPendulum : Module {
         checkGhostStability();
     }
 
+    /// CHAOS INJECTION
     void applyChaos(double chaos) {
         if (chaos <= CHAOS_DEAD) return;
 
@@ -206,6 +206,7 @@ struct OhMyPendulum : Module {
         pTheta2 = P_MAX * std::tanh(pTheta2 / P_MAX);
     }
 
+    /// STABILITY CHECK
     void checkStability() {
         if (std::isnan(theta1)  || std::isinf(theta1)  ||
             std::isnan(theta2)  || std::isinf(theta2)  ||
@@ -233,7 +234,7 @@ struct OhMyPendulum : Module {
         float skewParam   = params[PARAM_SKEW].getValue();
         float chaosParam  = params[PARAM_CHAOS].getValue();
 
-        // --- RETRIGGER (rising edge) ---
+        // RETRIGGER (rising edge)
         float trig = inputs[INPUT_1_RETRIG].getVoltage();
         if (lastRetrigVoltage <= 1.0f && trig > 1.0f && !angleKnobHeld.load()) {
             theta1 = angle1Param * 2.0 * M_PI;
@@ -245,7 +246,7 @@ struct OhMyPendulum : Module {
         }
         lastRetrigVoltage = trig;
 
-        // --- ANGLE KNOB HOLD ---
+        // ANGLE KNOB HOLD
         if (angleKnobHeld.load()) {
             // User is holding an angle knob: freeze sim, track knob position
             theta1 = angle1Param * 2.0 * M_PI;
@@ -255,7 +256,7 @@ struct OhMyPendulum : Module {
             simulationRunning = false;
             stableCounter = 0;
         } else if (!simulationRunning) {
-            // Knob released, counting down to auto-launch
+            // Knob released, counting dwn to launch
             stableCounter++;
             if (stableCounter >= LAUNCH_DELAY) {
                 simulationRunning = true;
@@ -265,11 +266,11 @@ struct OhMyPendulum : Module {
             }
         }
 
-        // --- CHAOS CV ---
+        // CHAOS CV
         float chaosCV = inputs[INPUT_2_CHAOS].getVoltage() / 5.0f;
         double chaos = clamp(chaosParam + chaosCV, 0.f, 1.f);
 
-        // --- CHAOS SNAPSHOT / RESTORE ---
+        // CHAOS SNAPSHOT / RESTORE
         if (chaos <= CHAOS_DEAD) {
             if (chaosWasActive) {
                 blendFromTheta1 = normalizeAngle(theta1);
@@ -295,12 +296,10 @@ struct OhMyPendulum : Module {
                          + std::max(0.0f, timeParam - 0.5f) * 10.4;
 
         // Target masses from SKEW
-        double centered = (skewParam - 0.5) * 2.0;
-        double skew = centered * 4.0;
-        double targetM1 = M1_DFLT * std::max(1.0, 1.0 - skew);
-        double targetM2 = M2_DFLT * std::max(1.0, 1.0 + skew);
+        double targetM1 = 0.5 + (1.0 - skewParam) * 1.0;
+        double targetM2 = 0.5 + skewParam * 1.0;
 
-        // --- SKEW STABILITY ---
+        // SKEW STABILITY
         bool massesChanging =
             (std::abs(targetM1 - prevM1) > MASS_EPS) ||
             (std::abs(targetM2 - prevM2) > MASS_EPS);
@@ -347,7 +346,7 @@ struct OhMyPendulum : Module {
         applyChaos(chaos);
         checkStability();
 
-        // --- OUTPUT WITH CROSSFADE ---
+        // OUTPUT WITH CROSSFADE
         double theta1Norm = normalizeAngle(theta1);
         double theta2Norm = normalizeAngle(theta2);
 
@@ -404,6 +403,8 @@ struct AngleKnob : app::SvgKnob {
         if (mod) mod->angleKnobHeld.store(false);
     }
 };
+
+
 
 ////////////////////////////////////////////////////////////////////////////////
 /// WIDGET
