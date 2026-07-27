@@ -1,0 +1,21 @@
+{
+  "slug": "keithrosseau",
+  "version": "2.0.0",
+  "license": "GPL-3.0-or-later",
+  "brand": "keithrosseau",
+  "name": "keithrosseau",
+  "author": "keithrosseau",
+  "authorUrl": "https://keithrose.bio.link",
+  "pluginUrl": "",
+  "manualUrl": "",
+  "sourceUrl": "",
+  "donateUrl": "https://boosty.to/keithrose/donate",
+  "modules": [
+    {
+      "slug": "OhMyPendulum",
+      "name": "Oh My Pendulum",
+      "description": "Chaotic CV generator based on double pendulum physics simulation.",
+      "tags": ["Random", "Physical Modeling"]
+    }
+  ]
+}

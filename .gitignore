@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+dist/
+dep/
+plugin.dylib
+plugin.dll
+*.vcvplugin
+
+# Backup scratch
+temp_back/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

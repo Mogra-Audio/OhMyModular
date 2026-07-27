@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="1.1619999mm"
+   height="1.1619999mm"
+   viewBox="0 0 1.1619999 1.1619999"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.3 (0d15f75, 2025-12-25)"
+   sodipodi:docname="Cover.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#505050"
+     bordercolor="#eeeeee"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050"
+     inkscape:document-units="mm"
+     showguides="true"
+     showgrid="false"
+     inkscape:zoom="44.536213"
+     inkscape:cx="-1.8861056"
+     inkscape:cy="3.3119116"
+     inkscape:window-width="1800"
+     inkscape:window-height="1020"
+     inkscape:window-x="0"
+     inkscape:window-y="40"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="layer1">
+    <inkscape:grid
+       id="grid1"
+       units="mm"
+       originx="0"
+       originy="0"
+       spacingx="0.99999993"
+       spacingy="0.99999998"
+       empcolor="#0099e5"
+       empopacity="0.30196078"
+       color="#0099e5"
+       opacity="0.14901961"
+       empspacing="5"
+       enabled="true"
+       visible="false" />
+  </sodipodi:namedview>
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <path
+       id="path28"
+       style="display:inline;fill:#515151;stroke:none;stroke-width:0.323321;stroke-opacity:0;fill-opacity:1"
+       d="M 0.13143652,0.21292986 A 0.58105154,0.58105154 0 0 1 0.94912163,0.13148802 0.58105154,0.58105154 0 0 1 1.0305635,0.94917315 0.58105154,0.58105154 0 0 1 0.21287832,1.0306151 0.58105154,0.58105154 0 0 1 0.13143652,0.21292986 Z"
+       inkscape:label="weight-low" />
+  </g>
+</svg>
