@@ -582,12 +582,12 @@ struct OhMyPendulumWidget : ModuleWidget {
         link2 = new widget::TransformWidget();
         link2->box.pos = Vec(0.0f, linkH);
         auto* link2Svg = new widget::SvgWidget();
-        link2Svg->setSvg(Svg::load(asset::plugin(pluginInstance, "res/link2.svg")));
+        link2Svg->setSvg(Svg::load(asset::plugin(pluginInstance, "res/Arm-2.svg")));
         link2->addChild(link2Svg);
         link1->addChild(link2);
 
         auto* link1Svg = new widget::SvgWidget();
-        link1Svg->setSvg(Svg::load(asset::plugin(pluginInstance, "res/link1.svg")));
+        link1Svg->setSvg(Svg::load(asset::plugin(pluginInstance, "res/Arm-1.svg")));
         link1->addChild(link1Svg);
         addChild(link1);
 
