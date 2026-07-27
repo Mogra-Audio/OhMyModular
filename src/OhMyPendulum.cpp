@@ -411,60 +411,52 @@ struct AngleKnob : app::SvgKnob {
 ////////////////////////////////////////////////////////////////////////////////
 struct ThemeInfo {
     const char* panel;
-    const char* smallKnob[4];
+    const char* smallKnob;
     const char* hugeKnob;
-    const char* input[2];
-    const char* output[4];
+    const char* input;
+    const char* output;
 };
 
 static constexpr ThemeInfo THEMES[] = {
     {
     /// Mono
         "res/Panel-Mono.svg",
-        {"res/SmallKnob.svg", "res/SmallKnob.svg", "res/SmallKnob.svg", "res/SmallKnob.svg"},
+        "res/SmallKnob.svg",
         "res/HugeKnob.svg",
-        {"res/Input.svg", "res/Input.svg"},
-        {"res/Output.svg", "res/Output.svg", "res/Output.svg", "res/Output.svg"}
+        "res/Input.svg",
+        "res/Output.svg"
     },
     /// Creme
     {
         "res/themes/theme_Creme/Panel-Creme.svg",
-        {"res/themes/theme_Creme/SmallKnob.svg", "res/themes/theme_Creme/SmallKnob.svg",
-         "res/themes/theme_Creme/SmallKnob.svg", "res/themes/theme_Creme/SmallKnob.svg"},
+        "res/themes/theme_Creme/SmallKnob.svg",
         "res/themes/theme_Creme/HugeKnob.svg",
-        {"res/themes/theme_Creme/Input.svg", "res/themes/theme_Creme/Input.svg"},
-        {"res/themes/theme_Creme/Output.svg", "res/themes/theme_Creme/Output.svg",
-         "res/themes/theme_Creme/Output.svg", "res/themes/theme_Creme/Output.svg"}
+        "res/themes/theme_Creme/Input.svg",
+        "res/themes/theme_Creme/Output.svg"
     },
     /// Minty
     {
         "res/themes/theme_Minty/Panel-Minty.svg",
-        {"res/themes/theme_Minty/SmallKnob.svg", "res/themes/theme_Minty/SmallKnob.svg",
-         "res/themes/theme_Minty/SmallKnob.svg", "res/themes/theme_Minty/SmallKnob.svg"},
+        "res/themes/theme_Minty/SmallKnob.svg",
         "res/themes/theme_Minty/HugeKnob.svg",
-        {"res/themes/theme_Minty/Input.svg", "res/themes/theme_Minty/Input.svg"},
-        {"res/themes/theme_Minty/Output.svg", "res/themes/theme_Minty/Output.svg",
-         "res/themes/theme_Minty/Output.svg", "res/themes/theme_Minty/Output.svg"}
+        "res/themes/theme_Minty/Input.svg",
+        "res/themes/theme_Minty/Output.svg"
     },
     /// Mage
     {
         "res/themes/theme_Mage/Panel-Mage.svg",
-        {"res/themes/theme_Mage/SmallKnob.svg", "res/themes/theme_Mage/SmallKnob.svg",
-         "res/themes/theme_Mage/SmallKnob.svg", "res/themes/theme_Mage/SmallKnob.svg"},
+        "res/themes/theme_Mage/SmallKnob.svg",
         "res/themes/theme_Mage/HugeKnob.svg",
-        {"res/themes/theme_Mage/Input.svg", "res/themes/theme_Mage/Input.svg"},
-        {"res/themes/theme_Mage/Output.svg", "res/themes/theme_Mage/Output.svg",
-         "res/themes/theme_Mage/Output.svg", "res/themes/theme_Mage/Output.svg"}
+        "res/themes/theme_Mage/Input.svg",
+        "res/themes/theme_Mage/Output.svg"
     },
     /// Love
     {
         "res/themes/theme_Love/Panel-Love.svg",
-        {"res/themes/theme_Love/SmallKnob-1.svg", "res/themes/theme_Love/SmallKnob-1.svg",
-         "res/themes/theme_Love/SmallKnob-1.svg", "res/themes/theme_Love/SmallKnob-1.svg"},
+        "res/themes/theme_Love/SmallKnob-1.svg",
         "res/themes/theme_Love/HugeKnob.svg",
-        {"res/themes/theme_Love/Input-1.svg", "res/themes/theme_Love/Input-1.svg"},
-        {"res/themes/theme_Love/Output-1.svg", "res/themes/theme_Love/Output-1.svg",
-         "res/themes/theme_Love/Output-1.svg", "res/themes/theme_Love/Output-1.svg"}
+        "res/themes/theme_Love/Input-1.svg",
+        "res/themes/theme_Love/Output-1.svg"
     }
 };
 
@@ -489,11 +481,11 @@ struct OhMyPendulumWidget : ModuleWidget {
 
     std::string getKnobPath(int i) {
         const ThemeInfo& t = THEMES[curTheme()];
-        return i == 4 ? t.hugeKnob : t.smallKnob[i % 4];
+        return i == 4 ? t.hugeKnob : t.smallKnob;
     }
-    std::string getInputPath(int i)  { return THEMES[curTheme()].input[i % 2]; }
-    std::string getOutputPath(int i) { return THEMES[curTheme()].output[i % 4]; }
-    std::string getPanelPath()       { return THEMES[curTheme()].panel; }
+    std::string getInputPath()  { return THEMES[curTheme()].input; }
+    std::string getOutputPath() { return THEMES[curTheme()].output; }
+    std::string getPanelPath()  { return THEMES[curTheme()].panel; }
 
     void updatePendulum() {
         if (!module || !link1 || !link2) return;
@@ -523,11 +515,11 @@ struct OhMyPendulumWidget : ModuleWidget {
             knobs[i]->box.pos  = knobCenters[i] - knobs[i]->box.size / 2.0;
         }
         for (int i = 0; i < 2; i++) {
-            inputs[i]->setSvg(APP->window->loadSvg(asset::plugin(pluginInstance, getInputPath(i))));
+            inputs[i]->setSvg(APP->window->loadSvg(asset::plugin(pluginInstance, getInputPath())));
             inputs[i]->box.pos = inputCenters[i] - inputs[i]->box.size / 2.0;
         }
         for (int i = 0; i < 4; i++) {
-            outputs[i]->setSvg(APP->window->loadSvg(asset::plugin(pluginInstance, getOutputPath(i))));
+            outputs[i]->setSvg(APP->window->loadSvg(asset::plugin(pluginInstance, getOutputPath())));
             outputs[i]->box.pos = outputCenters[i] - outputs[i]->box.size / 2.0;
         }
     }
