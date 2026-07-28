@@ -98,13 +98,13 @@ struct OhMyPendulum : Module {
     double savedP2 = 0.0;
     double blendFromTheta1 = 0.0;
     double blendFromTheta2 = 0.0;
-    int blendCounter = 0;
-    bool chaosWasActive = false;
+    int    blendCounter = 0;
+    bool   chaosWasActive = false;
 
     // Retrigger
     float lastRetrigVoltage = 0.0f;
 
-    // Auto-launch delay after knob release
+    // Launch delay after knob release (Samples)
     int stableCounter = 0;
     static constexpr int LAUNCH_DELAY = 4096;
 
@@ -128,7 +128,7 @@ struct OhMyPendulum : Module {
         configOutput(OUTPUT_3, "Angle II (Discrete)");
         configOutput(OUTPUT_4, "Angle II (Smooth)");
     }
-    /// HAMILTONIAN FORMALISM FORMULATION
+    /// HAMILTONIAN FORMALISM
     void computeDerivatives(double th1, double th2, double p1, double p2,
                             double m1, double m2, double timeScale,
                             double& dTh1, double& dTh2, double& dP1, double& dP2) {
@@ -206,7 +206,7 @@ struct OhMyPendulum : Module {
         pTheta2 = P_MAX * std::tanh(pTheta2 / P_MAX);
     }
 
-    /// STABILITY CHECK
+    /// STABILITY CHECK (MAIN+GHOST)
     void checkStability() {
         if (std::isnan(theta1)  || std::isinf(theta1)  ||
             std::isnan(theta2)  || std::isinf(theta2)  ||
