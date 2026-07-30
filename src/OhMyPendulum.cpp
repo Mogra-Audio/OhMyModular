@@ -187,7 +187,13 @@ struct OhMyPendulum : Module {
     void stepGhost(double dt, double m1, double m2, int substeps) {
         double gdt = dt / (double)substeps;
         for (int i = 0; i < substeps; i++) {
-            rk4StepState(gTheta1, gTheta2, gP1, gP2, gdt, m1, m2, 1.0);
+            double dT1, dT2, dP1, dP2;
+            computeDerivatives(gTheta1, gTheta2, gP1, gP2, m1, m2, 1.0,
+                               dT1, dT2, dP1, dP2);
+            gTheta1 += gdt * dT1;
+            gTheta2 += gdt * dT2;
+            gP1     += gdt * dP1;
+            gP2     += gdt * dP2;
         }
         checkGhostStability();
     }
