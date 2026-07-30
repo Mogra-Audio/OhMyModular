@@ -30,10 +30,6 @@ static constexpr double P_MAX = 25.0;
 static constexpr int GHOST_SUBSTEPS_MAX = 5;
 static constexpr int BLEND_FRAMES = 256;
 
-// SKEW mass smoothing
-static constexpr double MASS_SMOOTH_ALPHA = 0.05;
-static constexpr double MASS_EPS = 1e-10;
-
 // SVG link dimensions
 static constexpr float LINK_W_MM = 1.162f;
 static constexpr float LINK_H_MM = 4.089f;
@@ -77,9 +73,9 @@ struct OhMyPendulum : Module {
     double pTheta1 = 0.0;
     double pTheta2 = 0.0;
 
-    // Smoothed masses (SKEW stability)
-    double prevM1 = M1_DFLT;
-    double prevM2 = M2_DFLT;
+    // Last applied masses (SKEW omega preservation)
+    double lastM1 = M1_DFLT;
+    double lastM2 = M2_DFLT;
 
     // Ghost pendulum
     double gTheta1 = GHOST_THETA1;
@@ -361,43 +357,32 @@ struct OhMyPendulum : Module {
         double timeScale = 0.2 + timeParam * 1.6
                          + std::max(0.0f, timeParam - 0.5f) * 10.4;
 
-        // Target masses from SKEW
-        double targetM1 = 0.5 + (1.0 - skewParam) * 1.0;
-        double targetM2 = 0.5 + skewParam * 1.0;
+        // SKEW: mass distribution (sum = 2.0 always, range [0.5, 1.5])
+        double m1 = 0.5 + (1.0 - skewParam) * 1.0;
+        double m2 = 0.5 + skewParam * 1.0;
 
-        // SKEW STABILITY
-        bool massesChanging =
-            (std::abs(targetM1 - prevM1) > MASS_EPS) ||
-            (std::abs(targetM2 - prevM2) > MASS_EPS);
-
-        if (massesChanging) {
+        // Preserve angular velocities across mass changes
+        if (m1 != lastM1 || m2 != lastM2) {
             double cosDiff = std::cos(theta1 - theta2);
 
-            double I1_old = (prevM1 + prevM2) * L1 * L1;
-            double I2_old = prevM2 * L2 * L2;
-            double I12_old = prevM2 * L1 * L2;
-            double denom_old = std::max(
-                I1_old * I2_old - I12_old * I12_old * cosDiff * cosDiff, 1e-10);
+            double I1o = (lastM1 + lastM2) * L1 * L1;
+            double I2o = lastM2 * L2 * L2;
+            double I12o = lastM2 * L1 * L2;
+            double denom = std::max(I1o * I2o - I12o * I12o * cosDiff * cosDiff, 1e-10);
 
-            double omega1 = (I2_old * pTheta1 - I12_old * cosDiff * pTheta2) / denom_old;
-            double omega2 = (I1_old * pTheta2 - I12_old * cosDiff * pTheta1) / denom_old;
+            double w1 = (I2o * pTheta1 - I12o * cosDiff * pTheta2) / denom;
+            double w2 = (I1o * pTheta2 - I12o * cosDiff * pTheta1) / denom;
 
-            prevM1 += MASS_SMOOTH_ALPHA * (targetM1 - prevM1);
-            prevM2 += MASS_SMOOTH_ALPHA * (targetM2 - prevM2);
+            double I1n = (m1 + m2) * L1 * L1;
+            double I2n = m2 * L2 * L2;
+            double I12n = m2 * L1 * L2;
 
-            double I1_new = (prevM1 + prevM2) * L1 * L1;
-            double I2_new = prevM2 * L2 * L2;
-            double I12_new = prevM2 * L1 * L2;
+            pTheta1 = I1n * w1 + I12n * cosDiff * w2;
+            pTheta2 = I2n * w2 + I12n * cosDiff * w1;
 
-            pTheta1 = I1_new * omega1 + I12_new * cosDiff * omega2;
-            pTheta2 = I2_new * omega2 + I12_new * cosDiff * omega1;
-        } else {
-            prevM1 = targetM1;
-            prevM2 = targetM2;
+            lastM1 = m1;
+            lastM2 = m2;
         }
-
-        double m1 = prevM1;
-        double m2 = prevM2;
 
         // Ghost
         int substeps = 1 + (int)(chaos * (GHOST_SUBSTEPS_MAX - 1));
