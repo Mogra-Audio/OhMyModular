@@ -100,7 +100,7 @@ struct OhMyPendulum : Module {
     bool   chaosWasActive = false;
 
     // Retrigger
-    float lastRetrigVoltage = 0.0f;
+    dsp::SchmittTrigger retrigTrigger;
 
     // Angle value tracking — catches dropdown / precise entry
     float lastAngle1Param = 0.f;
@@ -282,9 +282,8 @@ struct OhMyPendulum : Module {
         bool angleHeld = angleKnobHeld.load();
         bool stateExplicitlySet = false;
 
-        // RETRIGGER (rising edge)
-        float trig = inputs[INPUT_1_RETRIG].getVoltage();
-        if (lastRetrigVoltage <= 1.0f && trig > 1.0f && !angleHeld) {
+        // RETRIGGER (Schmitt rising edge)
+        if (retrigTrigger.process(inputs[INPUT_1_RETRIG].getVoltage())) {
             theta1 = angle1Param * 2.0 * M_PI;
             theta2 = angle2Param * 2.0 * M_PI;
             pTheta1 = IMPULSE_1;
@@ -293,7 +292,6 @@ struct OhMyPendulum : Module {
             stableCounter = 0;
             stateExplicitlySet = true;
         }
-        lastRetrigVoltage = trig;
 
         // ANGLE VALUE CHANGE (dropdown / precise keyboard entry)
         bool angleValueChanged =
