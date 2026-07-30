@@ -25,6 +25,7 @@ static constexpr double GHOST_THETA2 = 2.79252680319;
 static constexpr double CHAOS_DEAD = 0.1;
 static constexpr double CHAOS_INJ_ANGLE = 0.8;
 static constexpr double CHAOS_INJ_MOM = 6.0;
+static constexpr double CHAOS_REFERENCE_SAMPLE_RATE = 48000.0;
 static constexpr double P_MAX = 25.0;
 static constexpr int GHOST_SUBSTEPS_MAX = 5;
 static constexpr int BLEND_FRAMES = 256;
@@ -191,11 +192,12 @@ struct OhMyPendulum : Module {
     }
 
     /// CHAOS INJECTION
-    void applyChaos(double chaos) {
+    void applyChaos(double chaos, double sampleTime) {
         if (chaos <= CHAOS_DEAD) return;
 
         double eff = (chaos - CHAOS_DEAD) / (1.0 - CHAOS_DEAD);
         double inj = eff * eff * eff * eff;
+        inj *= sampleTime * CHAOS_REFERENCE_SAMPLE_RATE;
 
         theta1 += inj * CHAOS_INJ_ANGLE * std::sin(gTheta1);
         theta2 += inj * CHAOS_INJ_ANGLE * std::sin(gTheta2);
@@ -367,7 +369,7 @@ struct OhMyPendulum : Module {
                          args.sampleTime, m1, m2, timeScale);
         }
 
-        applyChaos(chaos);
+        applyChaos(chaos, args.sampleTime);
         checkStability();
 
         // OUTPUT WITH CROSSFADE
