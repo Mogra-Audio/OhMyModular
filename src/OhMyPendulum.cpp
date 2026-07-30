@@ -88,6 +88,7 @@ struct OhMyPendulum : Module {
     double gP2 = 0.0;
 
     bool simulationRunning = false;
+    std::atomic<bool> resetStateRequested{true};
 
     // Angle knob hold (set from UI thread, read from audio thread)
     std::atomic<bool> angleKnobHeld{false};
@@ -104,6 +105,10 @@ struct OhMyPendulum : Module {
 
     // Retrigger
     float lastRetrigVoltage = 0.0f;
+
+    // Angle value tracking — catches dropdown / precise entry
+    float lastAngle1Param = 0.f;
+    float lastAngle2Param = 0.f;
 
     // Launch delay after knob release (Samples)
     int stableCounter = 0;
@@ -236,6 +241,20 @@ struct OhMyPendulum : Module {
         savedP2 = pTheta2;
     }
 
+    void initializeStateFromAngles(float angle1Param, float angle2Param) {
+        theta1 = angle1Param * 2.0 * M_PI;
+        theta2 = angle2Param * 2.0 * M_PI;
+        pTheta1 = IMPULSE_1;
+        pTheta2 = IMPULSE_2;
+
+        simulationRunning = true;
+        stableCounter = 0;
+
+        blendCounter = 0;
+        chaosWasActive = false;
+        saveChaosSnapshot();
+    }
+
     void restoreChaosSnapshot() {
         theta1 = savedTheta1;
         theta2 = savedTheta2;
@@ -249,6 +268,10 @@ struct OhMyPendulum : Module {
         float timeParam   = params[PARAM_TIME].getValue();
         float skewParam   = params[PARAM_SKEW].getValue();
         float chaosParam  = params[PARAM_CHAOS].getValue();
+
+        if (resetStateRequested.exchange(false)) {
+            initializeStateFromAngles(angle1Param, angle2Param);
+        }
 
         // CHAOS CV
         float chaosCV = inputs[INPUT_2_CHAOS].getVoltage() / 5.0f;
@@ -269,6 +292,23 @@ struct OhMyPendulum : Module {
             stateExplicitlySet = true;
         }
         lastRetrigVoltage = trig;
+
+        // ANGLE VALUE CHANGE (dropdown / precise keyboard entry)
+        bool angleValueChanged =
+            (std::abs(angle1Param - lastAngle1Param) > 1e-6f) ||
+            (std::abs(angle2Param - lastAngle2Param) > 1e-6f);
+        lastAngle1Param = angle1Param;
+        lastAngle2Param = angle2Param;
+
+        if (angleValueChanged && !angleHeld) {
+            theta1 = angle1Param * 2.0 * M_PI;
+            theta2 = angle2Param * 2.0 * M_PI;
+            pTheta1 = IMPULSE_1;
+            pTheta2 = IMPULSE_2;
+            simulationRunning = true;
+            stableCounter = 0;
+            stateExplicitlySet = true;
+        }
 
         // ANGLE KNOB HOLD
         if (angleHeld) {
@@ -394,6 +434,16 @@ struct OhMyPendulum : Module {
         outputs[OUTPUT_2].setVoltage(out2);
         outputs[OUTPUT_3].setVoltage(out3);
         outputs[OUTPUT_4].setVoltage(out4);
+    }
+
+    void onReset(const ResetEvent& e) override {
+        Module::onReset(e);
+        resetStateRequested.store(true);
+    }
+
+    void onRandomize(const RandomizeEvent& e) override {
+        Module::onRandomize(e);
+        resetStateRequested.store(true);
     }
 
     json_t* dataToJson() override {
