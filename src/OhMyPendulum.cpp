@@ -227,6 +227,20 @@ struct OhMyPendulum : Module {
         }
     }
 
+    void saveChaosSnapshot() {
+        savedTheta1 = theta1;
+        savedTheta2 = theta2;
+        savedP1 = pTheta1;
+        savedP2 = pTheta2;
+    }
+
+    void restoreChaosSnapshot() {
+        theta1 = savedTheta1;
+        theta2 = savedTheta2;
+        pTheta1 = savedP1;
+        pTheta2 = savedP2;
+    }
+
     void process(const ProcessArgs& args) override {
         float angle1Param = params[PARAM_ANGLE1].getValue();
         float angle2Param = params[PARAM_ANGLE2].getValue();
@@ -234,20 +248,28 @@ struct OhMyPendulum : Module {
         float skewParam   = params[PARAM_SKEW].getValue();
         float chaosParam  = params[PARAM_CHAOS].getValue();
 
+        // CHAOS CV
+        float chaosCV = inputs[INPUT_2_CHAOS].getVoltage() / 5.0f;
+        double chaos = clamp(chaosParam + chaosCV, 0.f, 1.f);
+        bool chaosActive = chaos > CHAOS_DEAD;
+        bool angleHeld = angleKnobHeld.load();
+        bool stateExplicitlySet = false;
+
         // RETRIGGER (rising edge)
         float trig = inputs[INPUT_1_RETRIG].getVoltage();
-        if (lastRetrigVoltage <= 1.0f && trig > 1.0f && !angleKnobHeld.load()) {
+        if (lastRetrigVoltage <= 1.0f && trig > 1.0f && !angleHeld) {
             theta1 = angle1Param * 2.0 * M_PI;
             theta2 = angle2Param * 2.0 * M_PI;
             pTheta1 = IMPULSE_1;
             pTheta2 = IMPULSE_2;
             simulationRunning = true;
             stableCounter = 0;
+            stateExplicitlySet = true;
         }
         lastRetrigVoltage = trig;
 
         // ANGLE KNOB HOLD
-        if (angleKnobHeld.load()) {
+        if (angleHeld) {
             // User is holding an angle knob: freeze sim, track knob position
             theta1 = angle1Param * 2.0 * M_PI;
             theta2 = angle2Param * 2.0 * M_PI;
@@ -255,6 +277,7 @@ struct OhMyPendulum : Module {
             pTheta2 = 0.0;
             simulationRunning = false;
             stableCounter = 0;
+            stateExplicitlySet = true;
         } else if (!simulationRunning) {
             // Knob released, counting dwn to launch
             stableCounter++;
@@ -266,30 +289,31 @@ struct OhMyPendulum : Module {
             }
         }
 
-        // CHAOS CV
-        float chaosCV = inputs[INPUT_2_CHAOS].getVoltage() / 5.0f;
-        double chaos = clamp(chaosParam + chaosCV, 0.f, 1.f);
-
         // CHAOS SNAPSHOT / RESTORE
-        if (chaos <= CHAOS_DEAD) {
-            if (chaosWasActive) {
+        // The snapshot is a baseline for returning from Chaos, not a copy of
+        // every non-chaotic sample. Explicit user actions replace that baseline.
+        if (stateExplicitlySet) {
+            saveChaosSnapshot();
+        }
+
+        if (chaosActive) {
+            if (!chaosWasActive) {
+                saveChaosSnapshot();
+                // A new Chaos pass supersedes an unfinished restore fade.
+                blendCounter = 0;
+            }
+        } else if (chaosWasActive) {
+            if (stateExplicitlySet) {
+                // A retrigger or manual angle set wins over an old snapshot.
+                blendCounter = 0;
+            } else {
                 blendFromTheta1 = normalizeAngle(theta1);
                 blendFromTheta2 = normalizeAngle(theta2);
-                theta1 = savedTheta1;
-                theta2 = savedTheta2;
-                pTheta1 = savedP1;
-                pTheta2 = savedP2;
+                restoreChaosSnapshot();
                 blendCounter = BLEND_FRAMES;
-                chaosWasActive = false;
-            } else {
-                savedTheta1 = theta1;
-                savedTheta2 = theta2;
-                savedP1 = pTheta1;
-                savedP2 = pTheta2;
             }
-        } else {
-            chaosWasActive = true;
         }
+        chaosWasActive = chaosActive;
 
         // Branchless time scale
         double timeScale = 0.2 + timeParam * 1.6
