@@ -30,6 +30,8 @@ static constexpr double P_MAX = 25.0;
 static constexpr int GHOST_SUBSTEPS_MAX = 5;
 static constexpr int BLEND_FRAMES = 256;
 
+static constexpr int THEME_COUNT = 5;
+
 // SVG link dimensions
 static constexpr float LINK_W_MM = 1.162f;
 static constexpr float LINK_H_MM = 4.089f;
@@ -443,7 +445,9 @@ struct OhMyPendulum : Module {
 
     void dataFromJson(json_t* rootJ) override {
         json_t* themeJ = json_object_get(rootJ, "theme");
-        if (themeJ) theme = json_integer_value(themeJ);
+        if (themeJ) {
+            theme = clamp((int)json_integer_value(themeJ), 0, THEME_COUNT - 1);
+        }
     }
 };
 
