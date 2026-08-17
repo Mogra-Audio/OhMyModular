@@ -89,7 +89,7 @@ struct OhMyPendulum : Module {
     std::atomic<bool> resetStateRequested{true};
 
     // Angle knob hold (set from UI thread, read from audio thread)
-    std::atomic<bool> angleKnobHeld{false};
+    std::atomic<int> angleHoldCount{0};
 
     // Chaos snapshot/restore
     double savedTheta1 = 0.0;
@@ -281,10 +281,11 @@ struct OhMyPendulum : Module {
         float chaosCV = inputs[INPUT_2_CHAOS].getVoltage() / 5.0f;
         double chaos = clamp(chaosParam + chaosCV, 0.f, 1.f);
         bool chaosActive = chaos > CHAOS_DEAD;
-        bool angleHeld = angleKnobHeld.load();
+
+        // === USER ACTIONS ===
         bool stateExplicitlySet = false;
 
-        // RETRIGGER (Schmitt rising edge)
+        // Retrig (Schmitt rising edge)
         if (retrigTrigger.process(inputs[INPUT_1_RETRIG].getVoltage())) {
             theta1 = angle1Param * 2.0 * M_PI;
             theta2 = angle2Param * 2.0 * M_PI;
@@ -295,7 +296,8 @@ struct OhMyPendulum : Module {
             stateExplicitlySet = true;
         }
 
-        // ANGLE VALUE CHANGE (dropdown / precise keyboard entry)
+        // Angle value change (dropdown / precise keyboard entry)
+        bool angleHeld = angleHoldCount.load(std::memory_order_relaxed) > 0;
         bool angleValueChanged =
             (std::abs(angle1Param - lastAngle1Param) > 1e-6f) ||
             (std::abs(angle2Param - lastAngle2Param) > 1e-6f);
@@ -312,7 +314,7 @@ struct OhMyPendulum : Module {
             stateExplicitlySet = true;
         }
 
-        // ANGLE KNOB HOLD
+        // Angle knob hold
         if (angleHeld) {
             // User is holding an angle knob: freeze sim, track knob position
             theta1 = angle1Param * 2.0 * M_PI;
@@ -333,9 +335,7 @@ struct OhMyPendulum : Module {
             }
         }
 
-        // CHAOS SNAPSHOT / RESTORE
-        // The snapshot is a baseline for returning from Chaos, not a copy of
-        // every non-chaotic sample. Explicit user actions replace that baseline.
+        // Chaos snapshot / restore
         if (stateExplicitlySet) {
             saveChaosSnapshot();
         }
@@ -456,20 +456,30 @@ struct OhMyPendulum : Module {
 ////////////////////////////////////////////////////////////////////////////////
 struct AngleKnob : app::SvgKnob {
     OhMyPendulum* mod = nullptr;
+    bool isHeld = false; // UI-thread only, guards against double-decrement
 
     void onButton(const ButtonEvent& e) override {
         SvgKnob::onButton(e);
         if (!mod) return;
         if (e.button == GLFW_MOUSE_BUTTON_LEFT) {
-            if (e.action == GLFW_PRESS)   mod->angleKnobHeld.store(true);
-            if (e.action == GLFW_RELEASE) mod->angleKnobHeld.store(false);
+            if (e.action == GLFW_PRESS && !isHeld) {
+                isHeld = true;
+                mod->angleHoldCount.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (e.action == GLFW_RELEASE && isHeld) {
+                isHeld = false;
+                mod->angleHoldCount.fetch_sub(1, std::memory_order_relaxed);
+            }
         }
     }
 
     // Safety: user drags outside widget and releases
     void onDragEnd(const DragEndEvent& e) override {
         SvgKnob::onDragEnd(e);
-        if (mod) mod->angleKnobHeld.store(false);
+        if (mod && isHeld) {
+            isHeld = false;
+            mod->angleHoldCount.fetch_sub(1, std::memory_order_relaxed);
+        }
     }
 };
 
