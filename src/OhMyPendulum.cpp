@@ -75,6 +75,10 @@ struct OhMyPendulum : Module {
     double pTheta1 = 0.0;
     double pTheta2 = 0.0;
 
+    // Display mirrors (audio thread writes, UI thread reads)
+    std::atomic<double> dispTheta1{0.0};
+    std::atomic<double> dispTheta2{0.0};
+
     // Last applied masses (SKEW omega preservation)
     double lastM1 = M1_DFLT;
     double lastM2 = M2_DFLT;
@@ -402,6 +406,9 @@ struct OhMyPendulum : Module {
 
         applyChaos(chaos, args.sampleTime);
         checkStability();
+        // Publish to UI (relaxed: need atomicity, not ordering)
+        dispTheta1.store(theta1, std::memory_order_relaxed);
+        dispTheta2.store(theta2, std::memory_order_relaxed);
 
         // OUTPUT WITH CROSSFADE
         double theta1Norm = normalizeAngle(theta1);
@@ -571,8 +578,8 @@ struct OhMyPendulumWidget : ModuleWidget {
         OhMyPendulum* m = dynamic_cast<OhMyPendulum*>(module);
         if (!m) return;
 
-        float t1 = (float)m->theta1;
-        float t2 = (float)m->theta2;
+        float t1 = (float)m->dispTheta1.load(std::memory_order_relaxed);
+        float t2 = (float)m->dispTheta2.load(std::memory_order_relaxed);
 
         float halfW = mm2px(Vec(LINK_W_MM * 0.5f, 0.0f)).x;
         Vec linkPivot = Vec(halfW, 0.0f);
