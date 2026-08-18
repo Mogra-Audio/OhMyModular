@@ -27,6 +27,7 @@ static constexpr double CHAOS_INJ_ANGLE = 0.8;
 static constexpr double CHAOS_INJ_MOM = 6.0;
 static constexpr double CHAOS_REFERENCE_SAMPLE_RATE = 48000.0;
 static constexpr double P_MAX = 25.0;
+static constexpr double MASS_EPS = 1e-6;
 static constexpr int GHOST_SUBSTEPS_MAX = 5;
 static constexpr int BLEND_FRAMES = 256;
 
@@ -372,7 +373,7 @@ struct OhMyPendulum : Module {
         double m2 = 0.5 + skewParam * 1.0;
 
         // Preserve angular velocities across mass changes
-        if (m1 != lastM1 || m2 != lastM2) {
+        if (std::abs(m1 - lastM1) > MASS_EPS || std::abs(m2 - lastM2) > MASS_EPS) {
             double cosDiff = std::cos(theta1 - theta2);
 
             double I1o = (lastM1 + lastM2) * L1 * L1;
