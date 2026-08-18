@@ -610,9 +610,6 @@ struct OhMyPendulumWidget : ModuleWidget {
         setPanel(createPanel(asset::plugin(pluginInstance, getPanelPath())));
         for (int i = 0; i < 5; i++) {
             knobs[i]->setSvg(APP->window->loadSvg(asset::plugin(pluginInstance, getKnobPath(i))));
-            knobs[i]->minAngle = KNOB_MIN_ANGLE;
-            knobs[i]->maxAngle = KNOB_MAX_ANGLE;
-            knobs[i]->speed    = 2.f;
             knobs[i]->box.pos  = knobCenters[i] - knobs[i]->box.size / 2.0;
         }
         for (int i = 0; i < 2; i++) {
@@ -655,7 +652,12 @@ struct OhMyPendulumWidget : ModuleWidget {
         knobs[3] = createParam<app::SvgKnob>(Vec(0,0), module, OhMyPendulum::PARAM_SKEW);
         knobs[4] = createParam<app::SvgKnob>(Vec(0,0), module, OhMyPendulum::PARAM_CHAOS);
 
-        for (int i = 0; i < 5; i++) addParam(knobs[i]);
+        for (int i = 0; i < 5; i++) {
+            knobs[i]->minAngle = KNOB_MIN_ANGLE;
+            knobs[i]->maxAngle = KNOB_MAX_ANGLE;
+            knobs[i]->speed    = 2.f;
+            addParam(knobs[i]);
+        }
 
         inputs[0] = createInput<app::SvgPort>(Vec(0,0), module, OhMyPendulum::INPUT_1_RETRIG);
         inputs[1] = createInput<app::SvgPort>(Vec(0,0), module, OhMyPendulum::INPUT_2_CHAOS);
