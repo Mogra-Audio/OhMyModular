@@ -112,9 +112,9 @@ struct OhMyPendulum : Module {
     float lastAngle1Param = 0.f;
     float lastAngle2Param = 0.f;
 
-    // Launch delay after knob release (Samples)
-    int stableCounter = 0;
-    static constexpr int LAUNCH_DELAY = 4096;
+    // Launch delay after knob release (seconds)
+    double stableTime = 0.0;
+    static constexpr double LAUNCH_DELAY_SEC = 0.085;
 
     OhMyPendulum() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -256,7 +256,7 @@ struct OhMyPendulum : Module {
         pTheta2 = IMPULSE_2;
 
         simulationRunning = true;
-        stableCounter = 0;
+        stableTime = 0;
 
         blendCounter = 0;
         chaosWasActive = false;
@@ -296,7 +296,7 @@ struct OhMyPendulum : Module {
             pTheta1 = IMPULSE_1;
             pTheta2 = IMPULSE_2;
             simulationRunning = true;
-            stableCounter = 0;
+            stableTime = 0.0;
             stateExplicitlySet = true;
         }
 
@@ -314,7 +314,7 @@ struct OhMyPendulum : Module {
             pTheta1 = IMPULSE_1;
             pTheta2 = IMPULSE_2;
             simulationRunning = true;
-            stableCounter = 0;
+            stableTime = 0.0;
             stateExplicitlySet = true;
         }
 
@@ -326,14 +326,14 @@ struct OhMyPendulum : Module {
             pTheta1 = 0.0;
             pTheta2 = 0.0;
             simulationRunning = false;
-            stableCounter = 0;
+            stableTime = 0;
             stateExplicitlySet = true;
         } else if (!simulationRunning) {
             // Knob released, counting dwn to launch
-            stableCounter++;
-            if (stableCounter >= LAUNCH_DELAY) {
+            stableTime += args.sampleTime;
+            if (stableTime >= LAUNCH_DELAY_SEC) {
                 simulationRunning = true;
-                stableCounter = 0;
+                stableTime = 0.0;
                 pTheta1 = IMPULSE_1;
                 pTheta2 = IMPULSE_2;
             }
