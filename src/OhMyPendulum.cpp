@@ -257,9 +257,9 @@ struct OhMyPendulum : Module {
         pTheta2 = IMPULSE_2;
 
         simulationRunning = true;
-        stableTime = 0;
+        stableTime = 0.0;
 
-        blendCounter = 0;
+        blendCounter = 0.0;
         chaosWasActive = false;
         saveChaosSnapshot();
     }
@@ -317,7 +317,7 @@ struct OhMyPendulum : Module {
             pTheta1 = 0.0;
             pTheta2 = 0.0;
             simulationRunning = false;
-            stableTime = 0;
+            stableTime = 0.0;
             stateExplicitlySet = true;
         } else if (!simulationRunning) {
             // Knob released, counting down to launch
@@ -342,12 +342,12 @@ struct OhMyPendulum : Module {
             if (!chaosWasActive) {
                 saveChaosSnapshot();
                 // A new Chaos pass supersedes an unfinished restore fade.
-                blendCounter = 0;
+                blendCounter = 0.0;
             }
         } else if (chaosWasActive) {
             if (stateExplicitlySet) {
                 // A retrigger or manual angle set wins over an old snapshot.
-                blendCounter = 0;
+                blendCounter = 0.0;
             } else {
                 blendFromTheta1 = normalizeAngle(theta1);
                 blendFromTheta2 = normalizeAngle(theta2);
@@ -724,3 +724,5 @@ struct OhMyPendulumWidget : ModuleWidget {
 };
 
 Model* modelOhMyPendulum = createModel<OhMyPendulum, OhMyPendulumWidget>("OhMyPendulum");
+
+/// HOLA :) <3
