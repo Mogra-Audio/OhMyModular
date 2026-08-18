@@ -576,8 +576,7 @@ struct OhMyPendulumWidget : ModuleWidget {
 
     void updatePendulum() {
         if (!module || !link1 || !link2) return;
-        OhMyPendulum* m = dynamic_cast<OhMyPendulum*>(module);
-        if (!m) return;
+        OhMyPendulum* m = static_cast<OhMyPendulum*>(module);
 
         float t1 = (float)m->dispTheta1.load(std::memory_order_relaxed);
         float t2 = (float)m->dispTheta2.load(std::memory_order_relaxed);
@@ -700,7 +699,7 @@ struct OhMyPendulumWidget : ModuleWidget {
             menu->addChild(createCheckMenuItem(names[i], "",
                 [=]() { return curTheme() == i; },
                 [=]() {
-                    if (module) dynamic_cast<OhMyPendulum*>(module)->theme = i;
+                    if (module) static_cast<OhMyPendulum*>(module)->theme = i;
                     updateTheme();
                 }
             ));
