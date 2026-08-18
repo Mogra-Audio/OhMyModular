@@ -271,23 +271,14 @@ struct OhMyPendulum : Module {
         pTheta2 = savedP2;
     }
 
-    void process(const ProcessArgs& args) override {
-        float angle1Param = params[PARAM_ANGLE1].getValue();
-        float angle2Param = params[PARAM_ANGLE2].getValue();
-        float timeParam   = params[PARAM_TIME].getValue();
-        float skewParam   = params[PARAM_SKEW].getValue();
-        float chaosParam  = params[PARAM_CHAOS].getValue();
+    /// TIME SCALE CURVE
+    static double computeTimeScale(float timeParam) {
+        return 0.2 + timeParam * 1.6
+             + std::max(0.0f, timeParam - 0.5f) * 10.4;
+    }
 
-        if (resetStateRequested.exchange(false)) {
-            initializeStateFromAngles(angle1Param, angle2Param);
-        }
-
-        // CHAOS CV
-        float chaosCV = inputs[INPUT_2_CHAOS].getVoltage() / 5.0f;
-        double chaos = clamp(chaosParam + chaosCV, 0.f, 1.f);
-        bool chaosActive = chaos > CHAOS_DEAD;
-
-        // === USER ACTIONS ===
+    /// USER ACTIONS
+    bool handleUserActions(float angle1Param, float angle2Param, double sampleTime) {
         bool stateExplicitlySet = false;
 
         // Retrig (Schmitt rising edge)
@@ -308,7 +299,6 @@ struct OhMyPendulum : Module {
             (std::abs(angle2Param - lastAngle2Param) > 1e-6f);
         lastAngle1Param = angle1Param;
         lastAngle2Param = angle2Param;
-
         if (angleValueChanged && !angleHeld) {
             theta1 = angle1Param * 2.0 * M_PI;
             theta2 = angle2Param * 2.0 * M_PI;
@@ -319,7 +309,7 @@ struct OhMyPendulum : Module {
             stateExplicitlySet = true;
         }
 
-        // Angle knob hold
+        // Angle knob hold / launch countdown
         if (angleHeld) {
             // User is holding an angle knob: freeze sim, track knob position
             theta1 = angle1Param * 2.0 * M_PI;
@@ -330,8 +320,8 @@ struct OhMyPendulum : Module {
             stableTime = 0;
             stateExplicitlySet = true;
         } else if (!simulationRunning) {
-            // Knob released, counting dwn to launch
-            stableTime += args.sampleTime;
+            // Knob released, counting down to launch
+            stableTime += sampleTime;
             if (stableTime >= LAUNCH_DELAY_SEC) {
                 simulationRunning = true;
                 stableTime = 0.0;
@@ -340,11 +330,14 @@ struct OhMyPendulum : Module {
             }
         }
 
-        // Chaos snapshot / restore
+        return stateExplicitlySet;
+    }
+
+    /// CHAOS SNAPSHOT / RESTORE
+    void handleChaosTransition(bool chaosActive, bool stateExplicitlySet) {
         if (stateExplicitlySet) {
             saveChaosSnapshot();
         }
-
         if (chaosActive) {
             if (!chaosWasActive) {
                 saveChaosSnapshot();
@@ -363,76 +356,98 @@ struct OhMyPendulum : Module {
             }
         }
         chaosWasActive = chaosActive;
+    }
 
-        // Branchless time scale
-        double timeScale = 0.2 + timeParam * 1.6
-                         + std::max(0.0f, timeParam - 0.5f) * 10.4;
-
-        // SKEW: mass distribution (sum = 2.0 always, range [0.5, 1.5])
-        double m1 = 0.5 + (1.0 - skewParam) * 1.0;
-        double m2 = 0.5 + skewParam * 1.0;
-
-        // Preserve angular velocities across mass changes
+    /// SKEW: mass distribution + angular velocity preservation
+    void updateMasses(float skewParam, double& m1, double& m2) {
+        m1 = 0.5 + (1.0 - skewParam) * 1.0;
+        m2 = 0.5 + skewParam * 1.0;
         if (std::abs(m1 - lastM1) > MASS_EPS || std::abs(m2 - lastM2) > MASS_EPS) {
             double cosDiff = std::cos(theta1 - theta2);
-
             double I1o = (lastM1 + lastM2) * L1 * L1;
             double I2o = lastM2 * L2 * L2;
             double I12o = lastM2 * L1 * L2;
             double denom = std::max(I1o * I2o - I12o * I12o * cosDiff * cosDiff, 1e-10);
-
             double w1 = (I2o * pTheta1 - I12o * cosDiff * pTheta2) / denom;
             double w2 = (I1o * pTheta2 - I12o * cosDiff * pTheta1) / denom;
-
             double I1n = (m1 + m2) * L1 * L1;
             double I2n = m2 * L2 * L2;
             double I12n = m2 * L1 * L2;
-
             pTheta1 = I1n * w1 + I12n * cosDiff * w2;
             pTheta2 = I2n * w2 + I12n * cosDiff * w1;
-
             lastM1 = m1;
             lastM2 = m2;
         }
+    }
 
-        // Ghost
-        int substeps = 1 + (int)(chaos * (GHOST_SUBSTEPS_MAX - 1));
-        stepGhost(args.sampleTime, m1, m2, substeps);
-
-        // Main RK4
-        if (simulationRunning) {
-            rk4StepState(theta1, theta2, pTheta1, pTheta2,
-                         args.sampleTime, m1, m2, timeScale);
-        }
-
-        applyChaos(chaos, args.sampleTime);
-        checkStability();
-        // Publish to UI (relaxed: need atomicity, not ordering)
-        dispTheta1.store(theta1, std::memory_order_relaxed);
-        dispTheta2.store(theta2, std::memory_order_relaxed);
-
-        // OUTPUT WITH CROSSFADE
+    /// OUTPUT WITH CROSSFADE
+    void renderOutputs() {
         double theta1Norm = normalizeAngle(theta1);
         double theta2Norm = normalizeAngle(theta2);
-
         if (blendCounter > 0) {
             double t = 1.0 - (double)blendCounter / (double)BLEND_FRAMES;
             theta1Norm = lerpAngle(blendFromTheta1, theta1Norm, t);
             theta2Norm = lerpAngle(blendFromTheta2, theta2Norm, t);
             blendCounter--;
         }
-
         float out1 = clamp((float)(theta1Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
         float out4 = clamp((float)(theta2Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
-
         float discreteStep = 1.0f / 12.0f;
         float out2 = clamp(std::round((float)(theta1Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
         float out3 = clamp(std::round((float)(theta2Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
-
         outputs[OUTPUT_1].setVoltage(out1);
         outputs[OUTPUT_2].setVoltage(out2);
         outputs[OUTPUT_3].setVoltage(out3);
         outputs[OUTPUT_4].setVoltage(out4);
+    }
+
+    void process(const ProcessArgs& args) override {
+        // Read params
+        float angle1Param = params[PARAM_ANGLE1].getValue();
+        float angle2Param = params[PARAM_ANGLE2].getValue();
+        float timeParam   = params[PARAM_TIME].getValue();
+        float skewParam   = params[PARAM_SKEW].getValue();
+        float chaosParam  = params[PARAM_CHAOS].getValue();
+
+        if (resetStateRequested.exchange(false)) {
+            initializeStateFromAngles(angle1Param, angle2Param);
+        }
+
+        // Chaos CV
+        float chaosCV = inputs[INPUT_2_CHAOS].getVoltage() / 5.0f;
+        double chaos = clamp(chaosParam + chaosCV, 0.f, 1.f);
+        bool chaosActive = chaos > CHAOS_DEAD;
+
+        // User actions (retrigger / angle change / knob hold / launch)
+        bool stateExplicitlySet = handleUserActions(angle1Param, angle2Param, args.sampleTime);
+
+        // Chaos snapshot / restore transitions
+        handleChaosTransition(chaosActive, stateExplicitlySet);
+
+        // Masses (SKEW)
+        double m1, m2;
+        updateMasses(skewParam, m1, m2);
+
+        // Ghost pendulum
+        int substeps = 1 + (int)(chaos * (GHOST_SUBSTEPS_MAX - 1));
+        stepGhost(args.sampleTime, m1, m2, substeps);
+
+        // Main integration
+        if (simulationRunning) {
+            rk4StepState(theta1, theta2, pTheta1, pTheta2,
+                         args.sampleTime, m1, m2, computeTimeScale(timeParam));
+        }
+
+        // Chaos injection + stability
+        applyChaos(chaos, args.sampleTime);
+        checkStability();
+
+        // Publish to UI (relaxed: need atomicity, not ordering)
+        dispTheta1.store(theta1, std::memory_order_relaxed);
+        dispTheta2.store(theta2, std::memory_order_relaxed);
+
+        // Outputs
+        renderOutputs();
     }
 
     void onReset(const ResetEvent& e) override {
@@ -612,8 +627,7 @@ struct OhMyPendulumWidget : ModuleWidget {
 
     OhMyPendulumWidget(OhMyPendulum* module) {
         setModule(module);
-        box.size.x = 11.0f * RACK_GRID_WIDTH;
-        float mw = box.size.x;
+        float mw = 11.0f * RACK_GRID_WIDTH;
         float mh = RACK_GRID_HEIGHT;
 
         knobCenters[0] = mm2px(Vec(8.89,  74.51));
