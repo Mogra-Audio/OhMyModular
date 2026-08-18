@@ -117,6 +117,13 @@ struct OhMyPendulum : Module {
     double stableTime = 0.0;
     static constexpr double LAUNCH_DELAY_SEC = 0.085;
 
+    // Output slew limiters (click suppression)
+    float slewOut1 = 0.f;
+    float slewOut2 = 0.f;
+    float slewOut3 = 0.f;
+    float slewOut4 = 0.f;
+    static constexpr double SLEW_RATE = 500.0; // max V/s
+
     OhMyPendulum() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
 
@@ -261,6 +268,8 @@ struct OhMyPendulum : Module {
 
         blendCounter = 0.0;
         chaosWasActive = false;
+
+        slewOut1 = slewOut2 = slewOut3 = slewOut4 = 0.f;
         saveChaosSnapshot();
     }
 
@@ -381,7 +390,7 @@ struct OhMyPendulum : Module {
     }
 
     /// OUTPUT WITH CROSSFADE
-    void renderOutputs() {
+    void renderOutputs(double sampleTime) {
         double theta1Norm = normalizeAngle(theta1);
         double theta2Norm = normalizeAngle(theta2);
         if (blendCounter > 0) {
@@ -390,15 +399,23 @@ struct OhMyPendulum : Module {
             theta2Norm = lerpAngle(blendFromTheta2, theta2Norm, t);
             blendCounter--;
         }
-        float out1 = clamp((float)(theta1Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
-        float out4 = clamp((float)(theta2Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
+        float target1 = clamp((float)(theta1Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
+        float target4 = clamp((float)(theta2Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
         float discreteStep = 1.0f / 12.0f;
-        float out2 = clamp(std::round((float)(theta1Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
-        float out3 = clamp(std::round((float)(theta2Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
-        outputs[OUTPUT_1].setVoltage(out1);
-        outputs[OUTPUT_2].setVoltage(out2);
-        outputs[OUTPUT_3].setVoltage(out3);
-        outputs[OUTPUT_4].setVoltage(out4);
+        float target2 = clamp(std::round((float)(theta1Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
+        float target3 = clamp(std::round((float)(theta2Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
+
+        // Slew limit: ограничиваем скорость изменения для устранения щелчков
+        float slewLimit = (float)(SLEW_RATE * sampleTime);
+        slewOut1 += clamp(target1 - slewOut1, -slewLimit, slewLimit);
+        slewOut2 += clamp(target2 - slewOut2, -slewLimit, slewLimit);
+        slewOut3 += clamp(target3 - slewOut3, -slewLimit, slewLimit);
+        slewOut4 += clamp(target4 - slewOut4, -slewLimit, slewLimit);
+
+        outputs[OUTPUT_1].setVoltage(slewOut1);
+        outputs[OUTPUT_2].setVoltage(slewOut2);
+        outputs[OUTPUT_3].setVoltage(slewOut3);
+        outputs[OUTPUT_4].setVoltage(slewOut4);
     }
 
     void process(const ProcessArgs& args) override {
@@ -447,7 +464,7 @@ struct OhMyPendulum : Module {
         dispTheta2.store(theta2, std::memory_order_relaxed);
 
         // Outputs
-        renderOutputs();
+        renderOutputs(args.sampleTime);
     }
 
     void onReset(const ResetEvent& e) override {
