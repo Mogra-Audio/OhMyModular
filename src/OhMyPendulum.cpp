@@ -5,17 +5,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DSP CONSTANTS
 ////////////////////////////////////////////////////////////////////////////////
+
 static constexpr double G = 9.81;
 static constexpr double L1 = 1.0;
 static constexpr double L2 = 1.0;
 static constexpr double M1_DFLT = 1.0;
 static constexpr double M2_DFLT = 1.0;
-
 static constexpr double ANGLE_TO_VOLT = 5.0 / M_PI;
-
 static constexpr double IMPULSE_1 = 0.05;
 static constexpr double IMPULSE_2 = 0.03;
-
 static constexpr float KNOB_MIN_ANGLE = -0.83f * M_PI;
 static constexpr float KNOB_MAX_ANGLE =  0.83f * M_PI;
 
@@ -29,9 +27,12 @@ static constexpr double CHAOS_REFERENCE_SAMPLE_RATE = 48000.0;
 static constexpr double P_MAX = 25.0;
 static constexpr double MASS_EPS = 1e-6;
 static constexpr int GHOST_SUBSTEPS_MAX = 5;
-static constexpr int BLEND_FRAMES = 256;
-
 static constexpr int THEME_COUNT = 5;
+
+// Energy-target settle (replaces snapshot/blend)
+static constexpr double SETTLE_TIME = 2.0;    // max settle duration (seconds)
+static constexpr double SETTLE_RATE = 8.0;    // convergence speed (1/sec), tau = 0.125s
+static constexpr double ENERGY_EPS  = 0.01;   // "close enough" threshold
 
 // SVG link dimensions
 static constexpr float LINK_W_MM = 1.162f;
@@ -40,22 +41,17 @@ static constexpr float LINK_H_MM = 4.089f;
 ////////////////////////////////////////////////////////////////////////////////
 /// HELPERS
 ////////////////////////////////////////////////////////////////////////////////
+
 static inline double normalizeAngle(double a) {
     a = std::fmod(a + M_PI, 2.0 * M_PI);
     if (a < 0.0) a += 2.0 * M_PI;
     return a - M_PI;
 }
 
-static inline double lerpAngle(double from, double to, double t) {
-    double diff = to - from;
-    if (diff > M_PI)  diff -= 2.0 * M_PI;
-    if (diff < -M_PI) diff += 2.0 * M_PI;
-    return from + diff * t;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 /// MODULE
 ////////////////////////////////////////////////////////////////////////////////
+
 struct OhMyPendulum : Module {
     enum ParamId {
         PARAM_ANGLE1, PARAM_ANGLE2, PARAM_TIME, PARAM_SKEW, PARAM_CHAOS, PARAMS_LEN
@@ -96,15 +92,12 @@ struct OhMyPendulum : Module {
     // Angle knob hold (set from UI thread, read from audio thread)
     std::atomic<int> angleHoldCount{0};
 
-    // Chaos snapshot/restore
-    double savedTheta1 = 0.0;
-    double savedTheta2 = 0.0;
-    double savedP1 = 0.0;
-    double savedP2 = 0.0;
-    double blendFromTheta1 = 0.0;
-    double blendFromTheta2 = 0.0;
-    int    blendCounter = 0;
-    bool   chaosWasActive = false;
+    // Chaos state
+    bool chaosWasActive = false;
+
+    // Energy-target settle
+    double preChaosEnergy = 0.0;
+    double settleTimeRemaining = 0.0;
 
     // Retrigger
     dsp::SchmittTrigger retrigTrigger;
@@ -144,6 +137,7 @@ struct OhMyPendulum : Module {
         configOutput(OUTPUT_3, "Angle II (Discrete)");
         configOutput(OUTPUT_4, "Angle II (Smooth)");
     }
+
     /// HAMILTONIAN FORMALISM
     void computeDerivatives(double th1, double th2, double p1, double p2,
                             double m1, double m2, double timeScale,
@@ -152,45 +146,37 @@ struct OhMyPendulum : Module {
         double sin2 = std::sin(th2);
         double cosDiff = std::cos(th1 - th2);
         double sinDiff = std::sin(th1 - th2);
-
         double I1 = (m1 + m2) * L1 * L1;
         double I2 = m2 * L2 * L2;
         double I12 = m2 * L1 * L2;
-
         double denom = I1 * I2 - I12 * I12 * cosDiff * cosDiff;
         denom = std::max(denom, 1e-10);
-
         double omega1 = (I2 * p1 - I12 * cosDiff * p2) / denom;
         double omega2 = (I1 * p2 - I12 * cosDiff * p1) / denom;
-
         dTh1 = omega1 * timeScale;
         dTh2 = omega2 * timeScale;
-
         double coupling = I12 * omega1 * omega2 * sinDiff;
         dP1 = (-coupling - (m1 + m2) * G * L1 * sin1) * timeScale;
         dP2 = ( coupling - m2 * G * L2 * sin2) * timeScale;
     }
+
     /// RK4 INTEGRATION
     void rk4StepState(double& th1, double& th2, double& p1, double& p2,
                       double dt, double m1, double m2, double timeScale) {
         double dT1_1, dT2_1, dP1_1, dP2_1;
         computeDerivatives(th1, th2, p1, p2, m1, m2, timeScale, dT1_1, dT2_1, dP1_1, dP2_1);
-
         double dT1_2, dT2_2, dP1_2, dP2_2;
         computeDerivatives(th1 + 0.5*dt*dT1_1, th2 + 0.5*dt*dT2_1,
                            p1  + 0.5*dt*dP1_1, p2  + 0.5*dt*dP2_1,
                            m1, m2, timeScale, dT1_2, dT2_2, dP1_2, dP2_2);
-
         double dT1_3, dT2_3, dP1_3, dP2_3;
         computeDerivatives(th1 + 0.5*dt*dT1_2, th2 + 0.5*dt*dT2_2,
                            p1  + 0.5*dt*dP1_2, p2  + 0.5*dt*dP2_2,
                            m1, m2, timeScale, dT1_3, dT2_3, dP1_3, dP2_3);
-
         double dT1_4, dT2_4, dP1_4, dP2_4;
         computeDerivatives(th1 + dt*dT1_3, th2 + dt*dT2_3,
                            p1  + dt*dP1_3, p2  + dt*dP2_3,
                            m1, m2, timeScale, dT1_4, dT2_4, dP1_4, dP2_4);
-
         th1 += dt * (dT1_1 + 2.0*dT1_2 + 2.0*dT1_3 + dT1_4) / 6.0;
         th2 += dt * (dT2_1 + 2.0*dT2_2 + 2.0*dT2_3 + dT2_4) / 6.0;
         p1  += dt * (dP1_1 + 2.0*dP1_2 + 2.0*dP1_3 + dP1_4) / 6.0;
@@ -215,18 +201,67 @@ struct OhMyPendulum : Module {
     /// CHAOS INJECTION
     void applyChaos(double chaos, double sampleTime) {
         if (chaos <= CHAOS_DEAD) return;
-
         double eff = (chaos - CHAOS_DEAD) / (1.0 - CHAOS_DEAD);
         double inj = eff * eff * eff * eff;
         inj *= sampleTime * CHAOS_REFERENCE_SAMPLE_RATE;
-
         theta1 += inj * CHAOS_INJ_ANGLE * std::sin(gTheta1);
         theta2 += inj * CHAOS_INJ_ANGLE * std::sin(gTheta2);
         pTheta1 += inj * CHAOS_INJ_MOM * gP1;
         pTheta2 += inj * CHAOS_INJ_MOM * gP2;
-
         pTheta1 = P_MAX * std::tanh(pTheta1 / P_MAX);
         pTheta2 = P_MAX * std::tanh(pTheta2 / P_MAX);
+    }
+
+    /// FULL MECHANICAL ENERGY of the double pendulum
+    double computeEnergy(double th1, double th2, double p1, double p2,
+                         double m1, double m2) {
+        double cosDiff = std::cos(th1 - th2);
+        double I1  = (m1 + m2) * L1 * L1;
+        double I2  = m2 * L2 * L2;
+        double I12 = m2 * L1 * L2;
+        double denom = std::max(I1 * I2 - I12 * I12 * cosDiff * cosDiff, 1e-10);
+        double omega1 = (I2 * p1 - I12 * cosDiff * p2) / denom;
+        double omega2 = (I1 * p2 - I12 * cosDiff * p1) / denom;
+        double kinetic   = 0.5 * (p1 * omega1 + p2 * omega2);
+        double potential = -(m1 + m2) * G * L1 * std::cos(th1)
+                           - m2 * G * L2 * std::cos(th2);
+        return kinetic + potential;
+    }
+
+    /// ENERGY-TARGET SETTLE
+    void energySettle(double sampleTime, double m1, double m2) {
+        if (settleTimeRemaining <= 0.0) return;
+
+        double E_cur = computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2);
+        double V_cur = -(m1 + m2) * G * L1 * std::cos(theta1)
+                       - m2 * G * L2 * std::cos(theta2);
+
+        if (E_cur > preChaosEnergy + ENERGY_EPS) {
+            if (V_cur > preChaosEnergy) {
+                // Potential energy above target (pendulum "upside down").
+                // Can't make kinetic negative, so damp momenta and let gravity pull.
+                double damp = std::exp(-SETTLE_RATE * sampleTime);
+                pTheta1 *= damp;
+                pTheta2 *= damp;
+            } else {
+                // Scale momenta toward target kinetic energy
+                double T_target = preChaosEnergy - V_cur;
+                double T_cur    = E_cur - V_cur;
+                if (T_cur > 1e-10) {
+                    double scale = std::sqrt(T_target / T_cur);
+                    double alpha = 1.0 - std::exp(-SETTLE_RATE * sampleTime);
+                    scale = 1.0 + (scale - 1.0) * alpha;
+                    pTheta1 *= scale;
+                    pTheta2 *= scale;
+                }
+            }
+        }
+
+        settleTimeRemaining -= sampleTime;
+        if (settleTimeRemaining <= 0.0 ||
+            std::abs(E_cur - preChaosEnergy) < ENERGY_EPS) {
+            settleTimeRemaining = 0.0;
+        }
     }
 
     /// STABILITY CHECK (MAIN+GHOST)
@@ -250,34 +285,16 @@ struct OhMyPendulum : Module {
         }
     }
 
-    void saveChaosSnapshot() {
-        savedTheta1 = theta1;
-        savedTheta2 = theta2;
-        savedP1 = pTheta1;
-        savedP2 = pTheta2;
-    }
-
     void initializeStateFromAngles(float angle1Param, float angle2Param) {
         theta1 = angle1Param * 2.0 * M_PI;
         theta2 = angle2Param * 2.0 * M_PI;
         pTheta1 = IMPULSE_1;
         pTheta2 = IMPULSE_2;
-
         simulationRunning = true;
         stableTime = 0.0;
-
-        blendCounter = 0.0;
+        settleTimeRemaining = 0.0;
         chaosWasActive = false;
-
         slewOut1 = slewOut2 = slewOut3 = slewOut4 = 0.f;
-        saveChaosSnapshot();
-    }
-
-    void restoreChaosSnapshot() {
-        theta1 = savedTheta1;
-        theta2 = savedTheta2;
-        pTheta1 = savedP1;
-        pTheta2 = savedP2;
     }
 
     /// TIME SCALE CURVE
@@ -320,7 +337,6 @@ struct OhMyPendulum : Module {
 
         // Angle knob hold / launch countdown
         if (angleHeld) {
-            // User is holding an angle knob: freeze sim, track knob position
             theta1 = angle1Param * 2.0 * M_PI;
             theta2 = angle2Param * 2.0 * M_PI;
             pTheta1 = 0.0;
@@ -329,7 +345,6 @@ struct OhMyPendulum : Module {
             stableTime = 0.0;
             stateExplicitlySet = true;
         } else if (!simulationRunning) {
-            // Knob released, counting down to launch
             stableTime += sampleTime;
             if (stableTime >= LAUNCH_DELAY_SEC) {
                 simulationRunning = true;
@@ -342,35 +357,8 @@ struct OhMyPendulum : Module {
         return stateExplicitlySet;
     }
 
-    /// CHAOS SNAPSHOT / RESTORE
-    void handleChaosTransition(bool chaosActive, bool stateExplicitlySet) {
-        if (stateExplicitlySet) {
-            saveChaosSnapshot();
-        }
-        if (chaosActive) {
-            if (!chaosWasActive) {
-                saveChaosSnapshot();
-                // A new Chaos pass supersedes an unfinished restore fade.
-                blendCounter = 0.0;
-            }
-        } else if (chaosWasActive) {
-            if (stateExplicitlySet) {
-                // A retrigger or manual angle set wins over an old snapshot.
-                blendCounter = 0.0;
-            } else {
-                blendFromTheta1 = normalizeAngle(theta1);
-                blendFromTheta2 = normalizeAngle(theta2);
-                restoreChaosSnapshot();
-                blendCounter = BLEND_FRAMES;
-            }
-        }
-        chaosWasActive = chaosActive;
-    }
-
-    /// SKEW: mass distribution + angular velocity preservation
-    void updateMasses(float skewParam, double& m1, double& m2) {
-        m1 = 0.5 + (1.0 - skewParam) * 1.0;
-        m2 = 0.5 + skewParam * 1.0;
+    /// SKEW: angular velocity preservation on mass change
+    void updateMasses(double m1, double m2) {
         if (std::abs(m1 - lastM1) > MASS_EPS || std::abs(m2 - lastM2) > MASS_EPS) {
             double cosDiff = std::cos(theta1 - theta2);
             double I1o = (lastM1 + lastM2) * L1 * L1;
@@ -389,29 +377,23 @@ struct OhMyPendulum : Module {
         }
     }
 
-    /// OUTPUT WITH CROSSFADE
+    /// OUTPUT (no blend, just slew)
     void renderOutputs(double sampleTime) {
         double theta1Norm = normalizeAngle(theta1);
         double theta2Norm = normalizeAngle(theta2);
-        if (blendCounter > 0) {
-            double t = 1.0 - (double)blendCounter / (double)BLEND_FRAMES;
-            theta1Norm = lerpAngle(blendFromTheta1, theta1Norm, t);
-            theta2Norm = lerpAngle(blendFromTheta2, theta2Norm, t);
-            blendCounter--;
-        }
+
         float target1 = clamp((float)(theta1Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
         float target4 = clamp((float)(theta2Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
         float discreteStep = 1.0f / 12.0f;
         float target2 = clamp(std::round((float)(theta1Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
         float target3 = clamp(std::round((float)(theta2Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
 
-        // Slew limit: ограничиваем скорость изменения для устранения щелчков
+        // Slew limit: click suppression
         float slewLimit = (float)(SLEW_RATE * sampleTime);
         slewOut1 += clamp(target1 - slewOut1, -slewLimit, slewLimit);
         slewOut2 += clamp(target2 - slewOut2, -slewLimit, slewLimit);
         slewOut3 += clamp(target3 - slewOut3, -slewLimit, slewLimit);
         slewOut4 += clamp(target4 - slewOut4, -slewLimit, slewLimit);
-
         outputs[OUTPUT_1].setVoltage(slewOut1);
         outputs[OUTPUT_2].setVoltage(slewOut2);
         outputs[OUTPUT_3].setVoltage(slewOut3);
@@ -435,15 +417,37 @@ struct OhMyPendulum : Module {
         double chaos = clamp(chaosParam + chaosCV, 0.f, 1.f);
         bool chaosActive = chaos > CHAOS_DEAD;
 
+        // Masses (SKEW) — computed early, needed for energy calculation
+        double m1 = 0.5 + (1.0 - skewParam) * 1.0;
+        double m2 = 0.5 + skewParam * 1.0;
+
         // User actions (retrigger / angle change / knob hold / launch)
         bool stateExplicitlySet = handleUserActions(angle1Param, angle2Param, args.sampleTime);
 
-        // Chaos snapshot / restore transitions
-        handleChaosTransition(chaosActive, stateExplicitlySet);
+        // Chaos energy tracking
+        if (chaosActive) {
+            if (!chaosWasActive) {
+                // Entering chaos: capture current energy as return target
+                preChaosEnergy = computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2);
+                settleTimeRemaining = 0.0;
+            }
+            // Explicit user action during chaos updates the return target
+            if (stateExplicitlySet) {
+                preChaosEnergy = computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2);
+            }
+        } else if (chaosWasActive) {
+            // Exiting chaos: begin energy settle
+            settleTimeRemaining = SETTLE_TIME;
+        }
+        chaosWasActive = chaosActive;
 
-        // Masses (SKEW)
-        double m1, m2;
-        updateMasses(skewParam, m1, m2);
+        // User action while settling cancels the settle
+        if (stateExplicitlySet && !chaosActive) {
+            settleTimeRemaining = 0.0;
+        }
+
+        // Mass omega preservation (after user actions, before integration)
+        updateMasses(m1, m2);
 
         // Ghost pendulum
         int substeps = 1 + (int)(chaos * (GHOST_SUBSTEPS_MAX - 1));
@@ -455,8 +459,11 @@ struct OhMyPendulum : Module {
                          args.sampleTime, m1, m2, computeTimeScale(timeParam));
         }
 
-        // Chaos injection + stability
+        // Chaos injection + energy settle
         applyChaos(chaos, args.sampleTime);
+        energySettle(args.sampleTime, m1, m2);
+
+        // Stability
         checkStability();
 
         // Publish to UI (relaxed: need atomicity, not ordering)
@@ -494,6 +501,7 @@ struct OhMyPendulum : Module {
 ////////////////////////////////////////////////////////////////////////////////
 /// ANGLE KNOB — reports mouse hold to module
 ////////////////////////////////////////////////////////////////////////////////
+
 struct AngleKnob : app::SvgKnob {
     OhMyPendulum* mod = nullptr;
     bool isHeld = false; // UI-thread only, guards against double-decrement
@@ -523,11 +531,10 @@ struct AngleKnob : app::SvgKnob {
     }
 };
 
-
-
 ////////////////////////////////////////////////////////////////////////////////
 /// WIDGET
 ////////////////////////////////////////////////////////////////////////////////
+
 struct ThemeInfo {
     const char* panel;
     const char* smallKnob;
@@ -538,7 +545,7 @@ struct ThemeInfo {
 
 static constexpr ThemeInfo THEMES[] = {
     {
-    /// Mono
+        /// Mono
         "res/Panel-Mono.svg",
         "res/SmallKnob.svg",
         "res/HugeKnob.svg",
@@ -581,15 +588,12 @@ static constexpr ThemeInfo THEMES[] = {
 
 struct OhMyPendulumWidget : ModuleWidget {
     int previewTheme = 0;
-
     math::Vec knobCenters[5];
     math::Vec inputCenters[2];
     math::Vec outputCenters[4];
-
     app::SvgKnob* knobs[5];
     app::SvgPort* inputs[2];
     app::SvgPort* outputs[4];
-
     widget::TransformWidget* link1 = nullptr;
     widget::TransformWidget* link2 = nullptr;
     math::Vec pendulumPos;
@@ -609,16 +613,12 @@ struct OhMyPendulumWidget : ModuleWidget {
     void updatePendulum() {
         if (!module || !link1 || !link2) return;
         OhMyPendulum* m = static_cast<OhMyPendulum*>(module);
-
         float t1 = (float)m->dispTheta1.load(std::memory_order_relaxed);
         float t2 = (float)m->dispTheta2.load(std::memory_order_relaxed);
-
         float halfW = mm2px(Vec(LINK_W_MM * 0.5f, 0.0f)).x;
         Vec linkPivot = Vec(halfW, 0.0f);
-
         link1->identity();
         link1->rotate(t1, linkPivot);
-
         link2->identity();
         link2->rotate(t2 - t1, linkPivot);
     }
@@ -649,8 +649,10 @@ struct OhMyPendulumWidget : ModuleWidget {
         knobCenters[2] = mm2px(Vec(34.29, 74.51));
         knobCenters[3] = mm2px(Vec(46.99, 74.51));
         knobCenters[4] = mm2px(Vec(14.51, 93.01));
+
         inputCenters[0] = mm2px(Vec(8.89,   114.877));
         inputCenters[1] = mm2px(Vec(20.141, 114.877));
+
         outputCenters[0] = mm2px(Vec(33.91,  103.59));
         outputCenters[1] = mm2px(Vec(46.894, 103.627));
         outputCenters[2] = mm2px(Vec(46.894, 114.877));
@@ -663,12 +665,10 @@ struct OhMyPendulumWidget : ModuleWidget {
             static_cast<AngleKnob*>(knobs[0])->mod = static_cast<OhMyPendulum*>(module);
             static_cast<AngleKnob*>(knobs[1])->mod = static_cast<OhMyPendulum*>(module);
         }
-
         // Standard knobs
         knobs[2] = createParam<app::SvgKnob>(Vec(0,0), module, OhMyPendulum::PARAM_TIME);
         knobs[3] = createParam<app::SvgKnob>(Vec(0,0), module, OhMyPendulum::PARAM_SKEW);
         knobs[4] = createParam<app::SvgKnob>(Vec(0,0), module, OhMyPendulum::PARAM_CHAOS);
-
         for (int i = 0; i < 5; i++) {
             knobs[i]->minAngle = KNOB_MIN_ANGLE;
             knobs[i]->maxAngle = KNOB_MAX_ANGLE;
@@ -697,9 +697,9 @@ struct OhMyPendulumWidget : ModuleWidget {
 
         link1 = new widget::TransformWidget();
         link1->box.pos = Vec(pendulumPos.x - halfW, pendulumPos.y);
-
         link2 = new widget::TransformWidget();
         link2->box.pos = Vec(0.0f, linkH);
+
         auto* link2Svg = new widget::SvgWidget();
         link2Svg->setSvg(Svg::load(asset::plugin(pluginInstance, "res/Arm-2.svg")));
         link2->addChild(link2Svg);
@@ -728,7 +728,7 @@ struct OhMyPendulumWidget : ModuleWidget {
         menu->addChild(new MenuSeparator);
         menu->addChild(createMenuLabel("Theme"));
         const char* names[] = {"Mono", "Creme", "Minty", "Mage", "Love"};
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < THEME_COUNT; i++) {
             menu->addChild(createCheckMenuItem(names[i], "",
                 [=]() { return curTheme() == i; },
                 [=]() {

@@ -3,8 +3,8 @@
 
 using namespace rack;
 
-// Объявляем экземпляр плагина (глобальная переменная)
+// Declare the plugin instance (global variable)
 extern Plugin* pluginInstance;
 
-// Объявляем модель нашего модуля (она будет создана в OhMyPendulum.cpp)
+// Declare the model of our module (it will be created in OhMyPendulum.cpp)
 extern Model* modelOhMyPendulum;
