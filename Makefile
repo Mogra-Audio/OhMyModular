@@ -12,7 +12,7 @@ DISTRIBUTABLES += LICENSE
 
 include $(RACK_DIR)/plugin.mk
 
-# Rack-free unit tests (no SDK or plugin build required).
+# Rack-free unit tests
 .PHONY: test
 test:
 	@mkdir -p build
