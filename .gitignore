@@ -17,3 +17,6 @@ temp_back/
 .idea/
 *.swp
 *.swo
+
+# Other
+TODO.md
