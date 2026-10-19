@@ -31,6 +31,7 @@ struct OhMyPendulumExpander : Module {
 
     // This module owns the expander -> main message buffers.
     ExpanderToPendulumMsg toParent[2];
+    bool lastCvActive = false;
 
     OhMyPendulumExpander() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -67,15 +68,22 @@ struct OhMyPendulumExpander : Module {
             return;
         }
 
-        // Send the CV inputs back to the main module.
-        auto* out = static_cast<ExpanderToPendulumMsg*>(leftExpander.producerMessage);
-        if (out) {
-            out->timeCV = cvToUnit(inputs[INPUT_TIME].getVoltage());
-            out->skewCV = cvToUnit(inputs[INPUT_SKEW].getVoltage());
-            out->timeConnected = inputs[INPUT_TIME].isConnected();
-            out->skewConnected = inputs[INPUT_SKEW].isConnected();
-            leftExpander.messageFlipRequested = true;
+        // Send the CV inputs back to the main module. When both inputs stay
+        // disconnected there is nothing new to say, so skip the exchange.
+        bool timeConnected = inputs[INPUT_TIME].isConnected();
+        bool skewConnected = inputs[INPUT_SKEW].isConnected();
+        bool cvActive = timeConnected || skewConnected;
+        if (cvActive || cvActive != lastCvActive) {
+            auto* out = static_cast<ExpanderToPendulumMsg*>(leftExpander.producerMessage);
+            if (out) {
+                out->timeCV = cvToUnit(inputs[INPUT_TIME].getVoltage());
+                out->skewCV = cvToUnit(inputs[INPUT_SKEW].getVoltage());
+                out->timeConnected = timeConnected;
+                out->skewConnected = skewConnected;
+                leftExpander.messageFlipRequested = true;
+            }
         }
+        lastCvActive = cvActive;
 
         // A bypassed parent produces no state; hold the outputs at zero.
         if (parent->isBypassed()) {
@@ -89,7 +97,20 @@ struct OhMyPendulumExpander : Module {
             return;
         }
 
-        inheritedTheme.store(in->theme, std::memory_order_relaxed);
+        int theme = in->theme;
+        if (theme != inheritedTheme.load(std::memory_order_relaxed)) {
+            inheritedTheme.store(theme, std::memory_order_relaxed);
+        }
+
+        // The XY math is pure overhead unless at least one output is patched.
+        bool anyOutput = false;
+        for (int i = 0; i < OUTPUTS_LEN; i++) {
+            if (outputs[i].isConnected()) {
+                anyOutput = true;
+                break;
+            }
+        }
+        if (!anyOutput) return;
 
         ArmPoints p = computeArmPoints(in->theta1, in->theta2);
         setCoordinateVoltage(OUTPUT_ANGLE1_X, p.x1);
@@ -108,12 +129,13 @@ struct OhMyPendulumExpander : Module {
     void processBypass(const ProcessArgs& args) override {
         // A bypassed expander must not keep overriding the main module's knobs.
         Module* parent = leftExpander.module;
-        if (parent && parent->model == modelOhMyPendulum) {
+        if (parent && parent->model == modelOhMyPendulum && lastCvActive) {
             auto* out = static_cast<ExpanderToPendulumMsg*>(leftExpander.producerMessage);
             if (out) {
                 *out = ExpanderToPendulumMsg();
                 leftExpander.messageFlipRequested = true;
             }
+            lastCvActive = false;
         }
         zeroOutputs();
     }

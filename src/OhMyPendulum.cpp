@@ -35,10 +35,14 @@ static constexpr int GHOST_SUBSTEPS_MAX = 5;
 // Expander CV smoothing (seconds): hides the jump when a cable is plugged.
 static constexpr float CV_SMOOTH_TIME = 0.005f;
 
-// Energy-target settle (replaces snapshot/blend)
-static constexpr double SETTLE_TIME = 2.0;    // max settle duration (seconds)
+// Energy-target settle
+static constexpr double SETTLE_TIME = 6.0;    // hard cap; typical convergence ~1.3s
 static constexpr double SETTLE_RATE = 8.0;    // convergence speed (1/sec), tau = 0.125s
 static constexpr double ENERGY_EPS  = 0.01;   // "close enough" threshold
+// Break a pendulum that is balanced at the top with (almost) no momentum.
+static constexpr double STUCK_TIME = 0.25;    // seconds of stillness before a nudge
+static constexpr double STUCK_MOMENTUM = 0.01;
+static constexpr double NUDGE_ANGLE = 0.01;   // radians
 
 // SVG link dimensions
 static constexpr float LINK_W_MM = 1.162f;
@@ -54,9 +58,8 @@ static inline double normalizeAngle(double a) {
     return a - M_PI;
 }
 
-// One-pole smoothing for control values (tau in seconds).
-static inline float approach(float current, float target, float dt, float tau) {
-    float alpha = 1.f - std::exp(-dt / tau);
+// One-pole smoothing; alpha is precomputed per sample rate.
+static inline float approach(float current, float target, float alpha) {
     return current + (target - current) * alpha;
 }
 
@@ -85,6 +88,7 @@ struct OhMyPendulum : Module {
     std::atomic<bool> skewCvActive{false};
     float smoothedTime = 0.5f;
     float smoothedSkew = 0.5f;
+    float cvSmoothAlpha = 0.f;
 
     // Pendulum state
     double theta1 = 0.0;
@@ -118,6 +122,7 @@ struct OhMyPendulum : Module {
     // Energy-target settle
     double preChaosEnergy = 0.0;
     double settleTimeRemaining = 0.0;
+    double settleStuckTime = 0.0;
 
     // Retrigger
     dsp::SchmittTrigger retrigTrigger;
@@ -163,6 +168,12 @@ struct OhMyPendulum : Module {
 
         smoothedTime = params[PARAM_TIME].getValue();
         smoothedSkew = params[PARAM_SKEW].getValue();
+        // Fallback until the engine reports the actual sample rate.
+        cvSmoothAlpha = 1.f - std::exp(-(1.f / 48000.f) / CV_SMOOTH_TIME);
+    }
+
+    void onSampleRateChange(const SampleRateChangeEvent& e) override {
+        cvSmoothAlpha = 1.f - std::exp(-e.sampleTime / CV_SMOOTH_TIME);
     }
 
     /// HAMILTONIAN FORMALISM
@@ -256,37 +267,67 @@ struct OhMyPendulum : Module {
     }
 
     /// ENERGY-TARGET SETTLE
+    ///
+    /// A conservative pendulum keeps whatever energy chaos leaves in it, so the
+    /// servo removes or injects kinetic energy until the total matches the value
+    /// captured when chaos was engaged. While the target is below the current
+    /// potential (pendulum high up) only damping is possible; once it drops, the
+    /// same servo can add energy back as well.
     void energySettle(double sampleTime, double m1, double m2) {
         if (settleTimeRemaining <= 0.0) return;
 
         double E_cur = computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2);
         double V_cur = -(m1 + m2) * G * L1 * std::cos(theta1)
                        - m2 * G * L2 * std::cos(theta2);
+        double dE = E_cur - preChaosEnergy;
+        double momentumFactor = 1.0;
+        bool nudged = false;
 
-        if (E_cur > preChaosEnergy + ENERGY_EPS) {
+        if (std::abs(dE) > ENERGY_EPS) {
             if (V_cur > preChaosEnergy) {
-                // Potential energy above target (pendulum "upside down").
-                // Can't make kinetic negative, so damp momenta and let gravity pull.
-                double damp = std::exp(-SETTLE_RATE * sampleTime);
-                pTheta1 *= damp;
-                pTheta2 *= damp;
+                // Target is below the potential at this pose: shed kinetic energy
+                // and let gravity bring the pendulum down.
+                momentumFactor = std::exp(-SETTLE_RATE * sampleTime);
+                pTheta1 *= momentumFactor;
+                pTheta2 *= momentumFactor;
+
+                // A pendulum balanced at the top would stay there forever; a
+                // nudge after a short stall breaks the unstable equilibrium.
+                bool nearlyStill = std::abs(pTheta1) < STUCK_MOMENTUM &&
+                                   std::abs(pTheta2) < STUCK_MOMENTUM;
+                settleStuckTime = nearlyStill ? settleStuckTime + sampleTime : 0.0;
+                if (settleStuckTime >= STUCK_TIME) {
+                    theta1 += NUDGE_ANGLE;
+                    settleStuckTime = 0.0;
+                    nudged = true;
+                }
             } else {
-                // Scale momenta toward target kinetic energy
-                double T_target = preChaosEnergy - V_cur;
-                double T_cur    = E_cur - V_cur;
-                if (T_cur > 1e-10) {
+                // Target kinetic energy is reachable: scale momenta both ways.
+                double T_target = std::max(preChaosEnergy - V_cur, 0.0);
+                double T_cur = E_cur - V_cur;
+                if (T_cur > 1e-12) {
                     double scale = std::sqrt(T_target / T_cur);
+                    // Bound the raw ratio: near-zero kinetic energy must not
+                    // produce a huge single-sample jump.
+                    scale = std::min(std::max(scale, 0.5), 2.0);
                     double alpha = 1.0 - std::exp(-SETTLE_RATE * sampleTime);
                     scale = 1.0 + (scale - 1.0) * alpha;
                     pTheta1 *= scale;
                     pTheta2 *= scale;
+                    momentumFactor = scale;
                 }
             }
         }
 
         settleTimeRemaining -= sampleTime;
+        // Kinetic energy scales with the square of the momentum factor, so the
+        // post-correction energy needs no second full evaluation. The nudge moves
+        // the angles, so only that rare sample is recomputed.
+        double E_post = nudged
+            ? computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2)
+            : V_cur + (E_cur - V_cur) * momentumFactor * momentumFactor;
         if (settleTimeRemaining <= 0.0 ||
-            std::abs(E_cur - preChaosEnergy) < ENERGY_EPS) {
+            std::abs(E_post - preChaosEnergy) < ENERGY_EPS) {
             settleTimeRemaining = 0.0;
         }
     }
@@ -320,6 +361,7 @@ struct OhMyPendulum : Module {
         simulationRunning = true;
         stableTime = 0.0;
         settleTimeRemaining = 0.0;
+        settleStuckTime = 0.0;
         chaosWasActive = false;
         slewOut1 = slewOut2 = slewOut3 = slewOut4 = 0.f;
     }
@@ -454,10 +496,8 @@ struct OhMyPendulum : Module {
         }
         timeCvActive.store(timeCvConnected, std::memory_order_relaxed);
         skewCvActive.store(skewCvConnected, std::memory_order_relaxed);
-        smoothedTime = approach(smoothedTime, timeCvConnected ? timeCv : timeParam,
-                                args.sampleTime, CV_SMOOTH_TIME);
-        smoothedSkew = approach(smoothedSkew, skewCvConnected ? skewCv : skewParam,
-                                args.sampleTime, CV_SMOOTH_TIME);
+        smoothedTime = approach(smoothedTime, timeCvConnected ? timeCv : timeParam, cvSmoothAlpha);
+        smoothedSkew = approach(smoothedSkew, skewCvConnected ? skewCv : skewParam, cvSmoothAlpha);
 
         if (resetStateRequested.exchange(false)) {
             initializeStateFromAngles(angle1Param, angle2Param);
@@ -481,6 +521,7 @@ struct OhMyPendulum : Module {
                 // Entering chaos: capture current energy as return target
                 preChaosEnergy = computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2);
                 settleTimeRemaining = 0.0;
+                settleStuckTime = 0.0;
             }
             // Explicit user action during chaos updates the return target
             if (stateExplicitlySet) {
@@ -489,12 +530,14 @@ struct OhMyPendulum : Module {
         } else if (chaosWasActive) {
             // Exiting chaos: begin energy settle
             settleTimeRemaining = SETTLE_TIME;
+            settleStuckTime = 0.0;
         }
         chaosWasActive = chaosActive;
 
         // User action while settling cancels the settle
         if (stateExplicitlySet && !chaosActive) {
             settleTimeRemaining = 0.0;
+            settleStuckTime = 0.0;
         }
 
         // Mass omega preservation (after user actions, before integration)
