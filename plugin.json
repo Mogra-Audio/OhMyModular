@@ -16,6 +16,12 @@
       "name": "Oh My Pendulum",
       "description": "Chaotic CV generator based on double pendulum physics simulation.",
       "tags": ["Random", "Physical Modeling"]
+    },
+    {
+      "slug": "OhMyPendulumExpander",
+      "name": "Oh My Pendulum Expander",
+      "description": "Adds Time and Skew CV inputs plus XY coordinate outputs to Oh My Pendulum.",
+      "tags": ["Expander"]
     }
   ]
 }

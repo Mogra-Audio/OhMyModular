@@ -6,4 +6,5 @@ Plugin* pluginInstance;
 void init(Plugin* p) {
     pluginInstance = p;
     p->addModel(modelOhMyPendulum);
+    p->addModel(modelOhMyPendulumExpander);
 }

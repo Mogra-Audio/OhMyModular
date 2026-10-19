@@ -1,4 +1,7 @@
 #include "plugin.hpp"
+#include "Theme.hpp"
+#include "ExpanderMessage.hpp"
+#include "dsp/ArmKinematics.hpp"
 #include <cmath>
 #include <atomic>
 
@@ -7,8 +10,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 static constexpr double G = 9.81;
-static constexpr double L1 = 1.0;
-static constexpr double L2 = 1.0;
+// Shared with the expander's coordinate mapping.
+static constexpr double L1 = ARM_L1;
+static constexpr double L2 = ARM_L2;
 static constexpr double M1_DFLT = 1.0;
 static constexpr double M2_DFLT = 1.0;
 static constexpr double ANGLE_TO_VOLT = 5.0 / M_PI;
@@ -27,7 +31,9 @@ static constexpr double CHAOS_REFERENCE_SAMPLE_RATE = 48000.0;
 static constexpr double P_MAX = 25.0;
 static constexpr double MASS_EPS = 1e-6;
 static constexpr int GHOST_SUBSTEPS_MAX = 5;
-static constexpr int THEME_COUNT = 5;
+
+// Expander CV smoothing (seconds): hides the jump when a cable is plugged.
+static constexpr float CV_SMOOTH_TIME = 0.005f;
 
 // Energy-target settle (replaces snapshot/blend)
 static constexpr double SETTLE_TIME = 2.0;    // max settle duration (seconds)
@@ -48,6 +54,12 @@ static inline double normalizeAngle(double a) {
     return a - M_PI;
 }
 
+// One-pole smoothing for control values (tau in seconds).
+static inline float approach(float current, float target, float dt, float tau) {
+    float alpha = 1.f - std::exp(-dt / tau);
+    return current + (target - current) * alpha;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 /// MODULE
 ////////////////////////////////////////////////////////////////////////////////
@@ -64,7 +76,15 @@ struct OhMyPendulum : Module {
     };
     enum LightId { LIGHTS_LEN };
 
-    int theme = 0;
+    // Saved in the patch and mirrored to the right-hand expander.
+    std::atomic<int> theme{0};
+
+    // Expander link: this module owns the main -> expander message buffers.
+    PendulumToExpanderMsg toExpander[2];
+    std::atomic<bool> timeCvActive{false};
+    std::atomic<bool> skewCvActive{false};
+    float smoothedTime = 0.5f;
+    float smoothedSkew = 0.5f;
 
     // Pendulum state
     double theta1 = 0.0;
@@ -136,6 +156,13 @@ struct OhMyPendulum : Module {
         configOutput(OUTPUT_2, "Angle I (Discrete)");
         configOutput(OUTPUT_3, "Angle II (Discrete)");
         configOutput(OUTPUT_4, "Angle II (Smooth)");
+
+        // Expander message buffers (sender owns both halves of the pair).
+        rightExpander.producerMessage = &toExpander[0];
+        rightExpander.consumerMessage = &toExpander[1];
+
+        smoothedTime = params[PARAM_TIME].getValue();
+        smoothedSkew = params[PARAM_SKEW].getValue();
     }
 
     /// HAMILTONIAN FORMALISM
@@ -408,6 +435,30 @@ struct OhMyPendulum : Module {
         float skewParam   = params[PARAM_SKEW].getValue();
         float chaosParam  = params[PARAM_CHAOS].getValue();
 
+        // Expander link: the right-hand expander owns the Time/Skew CV inputs.
+        // A patched input takes over the matching knob; smoothing hides the jump.
+        Module* expander = rightExpander.module;
+        bool hasExpander = expander && expander->model == modelOhMyPendulumExpander;
+        bool timeCvConnected = false;
+        bool skewCvConnected = false;
+        float timeCv = 0.f;
+        float skewCv = 0.f;
+        if (hasExpander) {
+            auto* msg = static_cast<ExpanderToPendulumMsg*>(expander->leftExpander.consumerMessage);
+            if (msg) {
+                timeCvConnected = msg->timeConnected;
+                skewCvConnected = msg->skewConnected;
+                timeCv = msg->timeCV;
+                skewCv = msg->skewCV;
+            }
+        }
+        timeCvActive.store(timeCvConnected, std::memory_order_relaxed);
+        skewCvActive.store(skewCvConnected, std::memory_order_relaxed);
+        smoothedTime = approach(smoothedTime, timeCvConnected ? timeCv : timeParam,
+                                args.sampleTime, CV_SMOOTH_TIME);
+        smoothedSkew = approach(smoothedSkew, skewCvConnected ? skewCv : skewParam,
+                                args.sampleTime, CV_SMOOTH_TIME);
+
         if (resetStateRequested.exchange(false)) {
             initializeStateFromAngles(angle1Param, angle2Param);
         }
@@ -418,8 +469,8 @@ struct OhMyPendulum : Module {
         bool chaosActive = chaos > CHAOS_DEAD;
 
         // Masses (SKEW) — computed early, needed for energy calculation
-        double m1 = 0.5 + (1.0 - skewParam) * 1.0;
-        double m2 = 0.5 + skewParam * 1.0;
+        double m1 = 0.5 + (1.0 - smoothedSkew) * 1.0;
+        double m2 = 0.5 + smoothedSkew * 1.0;
 
         // User actions (retrigger / angle change / knob hold / launch)
         bool stateExplicitlySet = handleUserActions(angle1Param, angle2Param, args.sampleTime);
@@ -456,7 +507,7 @@ struct OhMyPendulum : Module {
         // Main integration
         if (simulationRunning) {
             rk4StepState(theta1, theta2, pTheta1, pTheta2,
-                         args.sampleTime, m1, m2, computeTimeScale(timeParam));
+                         args.sampleTime, m1, m2, computeTimeScale(smoothedTime));
         }
 
         // Chaos injection + energy settle
@@ -465,6 +516,17 @@ struct OhMyPendulum : Module {
 
         // Stability
         checkStability();
+
+        // Publish state to the expander (it reads the previous sample).
+        if (hasExpander) {
+            auto* msg = static_cast<PendulumToExpanderMsg*>(rightExpander.producerMessage);
+            if (msg) {
+                msg->theta1 = theta1;
+                msg->theta2 = theta2;
+                msg->theme = theme.load(std::memory_order_relaxed);
+                rightExpander.messageFlipRequested = true;
+            }
+        }
 
         // Publish to UI (relaxed: need atomicity, not ordering)
         dispTheta1.store(theta1, std::memory_order_relaxed);
@@ -484,16 +546,32 @@ struct OhMyPendulum : Module {
         resetStateRequested.store(true);
     }
 
+    void onExpanderChange(const ExpanderChangeEvent& e) override {
+        // The right-hand expander owns the Time/Skew overrides; drop them on change.
+        if (e.side == 1) {
+            timeCvActive.store(false, std::memory_order_relaxed);
+            skewCvActive.store(false, std::memory_order_relaxed);
+        }
+    }
+
+    void processBypass(const ProcessArgs& args) override {
+        slewOut1 = slewOut2 = slewOut3 = slewOut4 = 0.f;
+        for (int i = 0; i < OUTPUTS_LEN; i++) {
+            outputs[i].setVoltage(0.f);
+        }
+    }
+
     json_t* dataToJson() override {
         json_t* rootJ = json_object();
-        json_object_set_new(rootJ, "theme", json_integer(theme));
+        json_object_set_new(rootJ, "theme", json_integer(theme.load(std::memory_order_relaxed)));
         return rootJ;
     }
 
     void dataFromJson(json_t* rootJ) override {
         json_t* themeJ = json_object_get(rootJ, "theme");
         if (themeJ) {
-            theme = clamp((int)json_integer_value(themeJ), 0, THEME_COUNT - 1);
+            theme.store(clamp((int)json_integer_value(themeJ), 0, THEME_COUNT - 1),
+                        std::memory_order_relaxed);
         }
     }
 };
@@ -532,59 +610,57 @@ struct AngleKnob : app::SvgKnob {
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-/// WIDGET
+/// CV KNOB — dimmed and locked while the expander drives the parameter
 ////////////////////////////////////////////////////////////////////////////////
 
-struct ThemeInfo {
-    const char* panel;
-    const char* smallKnob;
-    const char* hugeKnob;
-    const char* input;
-    const char* output;
-};
+struct CvKnob : app::SvgKnob {
+    bool disabled = false;
 
-static constexpr ThemeInfo THEMES[] = {
-    {
-        /// Mono
-        "res/Panel-Mono.svg",
-        "res/SmallKnob.svg",
-        "res/HugeKnob.svg",
-        "res/Input.svg",
-        "res/Output.svg"
-    },
-    /// Creme
-    {
-        "res/themes/theme_Creme/Panel-Creme.svg",
-        "res/themes/theme_Creme/SmallKnob.svg",
-        "res/themes/theme_Creme/HugeKnob.svg",
-        "res/themes/theme_Creme/Input.svg",
-        "res/themes/theme_Creme/Output.svg"
-    },
-    /// Minty
-    {
-        "res/themes/theme_Minty/Panel-Minty.svg",
-        "res/themes/theme_Minty/SmallKnob.svg",
-        "res/themes/theme_Minty/HugeKnob.svg",
-        "res/themes/theme_Minty/Input.svg",
-        "res/themes/theme_Minty/Output.svg"
-    },
-    /// Mage
-    {
-        "res/themes/theme_Mage/Panel-Mage.svg",
-        "res/themes/theme_Mage/SmallKnob.svg",
-        "res/themes/theme_Mage/HugeKnob.svg",
-        "res/themes/theme_Mage/Input.svg",
-        "res/themes/theme_Mage/Output.svg"
-    },
-    /// Love
-    {
-        "res/themes/theme_Love/Panel-Love.svg",
-        "res/themes/theme_Love/SmallKnob-1.svg",
-        "res/themes/theme_Love/HugeKnob.svg",
-        "res/themes/theme_Love/Input-1.svg",
-        "res/themes/theme_Love/Output-1.svg"
+    void onButton(const ButtonEvent& e) override {
+        if (disabled && e.button == GLFW_MOUSE_BUTTON_LEFT) {
+            // Swallow the press so it can't start a module drag either.
+            e.consume(this);
+            return;
+        }
+        SvgKnob::onButton(e);
+    }
+
+    void onDoubleClick(const DoubleClickEvent& e) override {
+        if (disabled) {
+            e.consume(this);
+            return;
+        }
+        SvgKnob::onDoubleClick(e);
+    }
+
+    void onDragStart(const DragStartEvent& e) override {
+        if (disabled) return;
+        SvgKnob::onDragStart(e);
+    }
+
+    void onDragMove(const DragMoveEvent& e) override {
+        if (disabled) return;
+        SvgKnob::onDragMove(e);
+    }
+
+    void onDragEnd(const DragEndEvent& e) override {
+        // Always let the base clean up a drag that started before the lock.
+        SvgKnob::onDragEnd(e);
+    }
+
+    void draw(const DrawArgs& args) override {
+        SvgKnob::draw(args);
+        if (!disabled) return;
+        nvgBeginPath(args.vg);
+        nvgCircle(args.vg, box.size.x * 0.5f, box.size.y * 0.5f, box.size.x * 0.5f);
+        nvgFillColor(args.vg, nvgRGBA(0, 0, 0, 110));
+        nvgFill(args.vg);
     }
 };
+
+////////////////////////////////////////////////////////////////////////////////
+/// WIDGET
+////////////////////////////////////////////////////////////////////////////////
 
 struct OhMyPendulumWidget : ModuleWidget {
     int previewTheme = 0;
@@ -592,6 +668,8 @@ struct OhMyPendulumWidget : ModuleWidget {
     math::Vec inputCenters[2];
     math::Vec outputCenters[4];
     app::SvgKnob* knobs[5];
+    CvKnob* timeKnob = nullptr;
+    CvKnob* skewKnob = nullptr;
     app::SvgPort* inputs[2];
     app::SvgPort* outputs[4];
     widget::TransformWidget* link1 = nullptr;
@@ -599,7 +677,10 @@ struct OhMyPendulumWidget : ModuleWidget {
     math::Vec pendulumPos;
 
     int curTheme() const {
-        return module ? static_cast<OhMyPendulum*>(module)->theme : previewTheme;
+        int t = module
+            ? static_cast<OhMyPendulum*>(module)->theme.load(std::memory_order_relaxed)
+            : previewTheme;
+        return clamp(t, 0, THEME_COUNT - 1);
     }
 
     std::string getKnobPath(int i) {
@@ -665,9 +746,9 @@ struct OhMyPendulumWidget : ModuleWidget {
             static_cast<AngleKnob*>(knobs[0])->mod = static_cast<OhMyPendulum*>(module);
             static_cast<AngleKnob*>(knobs[1])->mod = static_cast<OhMyPendulum*>(module);
         }
-        // Standard knobs
-        knobs[2] = createParam<app::SvgKnob>(Vec(0,0), module, OhMyPendulum::PARAM_TIME);
-        knobs[3] = createParam<app::SvgKnob>(Vec(0,0), module, OhMyPendulum::PARAM_SKEW);
+        // Standard knobs; Time/Skew dim while the expander drives them.
+        knobs[2] = timeKnob = createParam<CvKnob>(Vec(0,0), module, OhMyPendulum::PARAM_TIME);
+        knobs[3] = skewKnob = createParam<CvKnob>(Vec(0,0), module, OhMyPendulum::PARAM_SKEW);
         knobs[4] = createParam<app::SvgKnob>(Vec(0,0), module, OhMyPendulum::PARAM_CHAOS);
         for (int i = 0; i < 5; i++) {
             knobs[i]->minAngle = KNOB_MIN_ANGLE;
@@ -718,9 +799,17 @@ struct OhMyPendulumWidget : ModuleWidget {
         updateTheme();
     }
 
+    void updateCvKnobs() {
+        if (!module || !timeKnob || !skewKnob) return;
+        OhMyPendulum* m = static_cast<OhMyPendulum*>(module);
+        timeKnob->disabled = m->timeCvActive.load(std::memory_order_relaxed);
+        skewKnob->disabled = m->skewCvActive.load(std::memory_order_relaxed);
+    }
+
     void step() override {
         ModuleWidget::step();
         updatePendulum();
+        updateCvKnobs();
     }
 
     void appendContextMenu(Menu* menu) override {
@@ -732,7 +821,8 @@ struct OhMyPendulumWidget : ModuleWidget {
             menu->addChild(createCheckMenuItem(names[i], "",
                 [=]() { return curTheme() == i; },
                 [=]() {
-                    if (module) static_cast<OhMyPendulum*>(module)->theme = i;
+                    previewTheme = i;
+                    if (module) static_cast<OhMyPendulum*>(module)->theme.store(i, std::memory_order_relaxed);
                     updateTheme();
                 }
             ));
