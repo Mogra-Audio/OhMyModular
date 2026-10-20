@@ -1,26 +1,27 @@
 {
-  "slug": "keithrosseau",
+  "slug": "OhMyModular",
   "version": "2.0.0",
   "license": "GPL-3.0-or-later",
-  "brand": "keithrosseau",
-  "name": "keithrosseau",
-  "author": "keithrosseau",
-  "authorUrl": "https://keithrose.bio.link",
-  "pluginUrl": "",
-  "manualUrl": "",
-  "sourceUrl": "",
+  "brand": "mograaudio",
+  "name": "OhMyModular",
+  "description": "Open-source modules for VCV Rack.",
+  "author": "Mogra Audio",
+  "authorUrl": "https://mogra.audio",
+  "pluginUrl": "https://github.com/mogra-audio/OhMyModular",
+  "manualUrl": "https://github.com/mogra-audio/OhMyModular#readme",
+  "sourceUrl": "https://github.com/mogra-audio/OhMyModular",
   "donateUrl": "https://boosty.to/keithrose/donate",
   "modules": [
     {
       "slug": "OhMyPendulum",
-      "name": "Oh My Pendulum",
-      "description": "Chaotic CV generator based on double pendulum physics simulation.",
+      "name": "OhMyPendulum",
+      "description": "Chaotic CV generator simulating double pendulum with a twist.",
       "tags": ["Random", "Physical Modeling"]
     },
     {
       "slug": "OhMyPendulumExpander",
-      "name": "Oh My Pendulum Expander",
-      "description": "Adds Time and Skew CV inputs plus XY coordinate outputs to Oh My Pendulum.",
+      "name": "OhMyPendulum Expander",
+      "description": "Adds Time and Skew CV inputs & XY coordinate outputs to OhMyPendulum.",
       "tags": ["Expander"]
     }
   ]
