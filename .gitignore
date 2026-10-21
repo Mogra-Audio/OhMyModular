@@ -4,6 +4,7 @@ dist/
 dep/
 plugin.dylib
 plugin.dll
+/plugin.so
 *.vcvplugin
 
 # Backup scratch
