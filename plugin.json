@@ -6,8 +6,7 @@
   "brand": "Mogra Audio",
   "author": "keithrosseau",
   "description": "Carefully crafted open-source VCV Rack modules with a twist",
-  "authorUrl": "https://mogra.audio",
-  "pluginUrl": "https://github.com/Mogra-Audio/OhMyModular",
+  "authorUrl": "https://github.com/Mogra-Audio",
   "manualUrl": "https://github.com/Mogra-Audio/OhMyModular#readme",
   "sourceUrl": "https://github.com/Mogra-Audio/OhMyModular",
   "donateUrl": "https://boosty.to/keithrose/donate",
@@ -19,7 +18,7 @@
       "name": "OhMyPendulum",
       "description": "Chaotic double pendulum CV generator with a twist.",
       "manualUrl": "https://github.com/Mogra-Audio/OhMyModular#readme",
-      "tags": ["Random", "Physical Modeling"],
+      "tags": ["Random", "Physical modeling"],
       "keywords": "omp pendulum chaos"
     },
 
