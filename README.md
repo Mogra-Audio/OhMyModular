@@ -139,7 +139,7 @@ make -j4
 make test
 ```
 
-The project has a small Rack-free test target (`make test`) for the expander math and shared helpers. Please run it before opening a pull request. Source comments are in English, and the shared math lives in `src/dsp/` and plain headers.
+The project has a Rack-free test suite (`make test`) covering the DSP core, pendulum physics, chaos, energy settle, outputs, user actions, expander geometry/CV and theme table. The tests build into one binary and do not require the Rack SDK. Please run them before opening a pull request. Shared DSP lives in `src/dsp/`.
 
 ---
 
