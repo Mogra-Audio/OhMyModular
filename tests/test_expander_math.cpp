@@ -1,5 +1,6 @@
 // Rack-free checks for the expander's geometry and CV contract.
 #include "dsp/ArmKinematics.hpp"
+#include "dsp/Angle.hpp"
 #include "ExpanderMessage.hpp"
 #include "Theme.hpp"
 
@@ -73,6 +74,32 @@ static void testCoordinateBounds() {
     }
 }
 
+static void testAngleWrap() {
+    CHECK(near(normalizeAngle(0.0), 0.0));
+    CHECK(near(normalizeAngle(2.0 * M_PI), 0.0));
+    CHECK(near(normalizeAngle(-2.0 * M_PI), 0.0));
+    CHECK(near(normalizeAngle(3.0 * M_PI), -M_PI));
+    CHECK(near(normalizeAngle(1000.0 * M_PI), 0.0));
+
+    for (int i = -8; i <= 8; i++) {
+        CHECK(near(normalizeAngle(0.37 + i * 2.0 * M_PI), normalizeAngle(0.37)));
+    }
+    for (int i = -1000; i <= 1000; i++) {
+        double a = normalizeAngle(i * 0.37);
+        CHECK(a >= -M_PI && a < M_PI);
+    }
+
+    CHECK(near(wrapAngle(0.5), 0.5));
+    CHECK(near(wrapAngle(3.0 * M_PI), -M_PI));
+    CHECK(near(wrapAngle(2.0 * M_PI), 0.0));
+
+    ArmPoints a = computeArmPoints(0.7, -1.2);
+    ArmPoints b = computeArmPoints(normalizeAngle(0.7 + 10.0 * M_PI),
+                                   normalizeAngle(-1.2 + 10.0 * M_PI));
+    CHECK(near(a.x1, b.x1) && near(a.y1, b.y1));
+    CHECK(near(a.x2, b.x2) && near(a.y2, b.y2));
+}
+
 static void testThemeTable() {
     CHECK(THEME_COUNT == 5);
     for (int i = 0; i < THEME_COUNT; i++) {
@@ -95,6 +122,7 @@ int main() {
     testVoltageScale();
     testCvMapping();
     testCoordinateBounds();
+    testAngleWrap();
     testThemeTable();
 
     if (failures) {

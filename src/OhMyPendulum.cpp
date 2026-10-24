@@ -2,6 +2,7 @@
 #include "Theme.hpp"
 #include "ExpanderMessage.hpp"
 #include "dsp/ArmKinematics.hpp"
+#include "dsp/Angle.hpp"
 #include <cmath>
 #include <atomic>
 #include <cstdint>
@@ -56,12 +57,6 @@ static constexpr float LINK_H_MM = 4.089f;
 ////////////////////////////////////////////////////////////////////////////////
 /// HELPERS
 ////////////////////////////////////////////////////////////////////////////////
-
-static inline double normalizeAngle(double a) {
-    a = std::fmod(a + M_PI, 2.0 * M_PI);
-    if (a < 0.0) a += 2.0 * M_PI;
-    return a - M_PI;
-}
 
 // One-pole smoothing; alpha is precomputed per sample rate.
 static inline float approach(float current, float target, float alpha) {
@@ -240,6 +235,8 @@ struct OhMyPendulum : Module {
             gP2     += gdt * dP2;
         }
         checkGhostStability();
+        gTheta1 = wrapAngle(gTheta1);
+        gTheta2 = wrapAngle(gTheta2);
     }
 
     /// CHAOS INJECTION
@@ -453,10 +450,10 @@ struct OhMyPendulum : Module {
         }
     }
 
-    /// OUTPUT (no blend, just slew)
+    /// OUTPUT (no blend, just slew; theta is wrapped after integration)
     void renderOutputs(double sampleTime) {
-        double theta1Norm = normalizeAngle(theta1);
-        double theta2Norm = normalizeAngle(theta2);
+        double theta1Norm = theta1;
+        double theta2Norm = theta2;
 
         float target1 = clamp((float)(theta1Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
         float target4 = clamp((float)(theta2Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
@@ -567,6 +564,11 @@ struct OhMyPendulum : Module {
 
         // Stability
         checkStability();
+
+        // The Hamiltonian is 2*pi-periodic, so wrapping preserves the motion
+        // and keeps the UI/expander trig arguments bounded over long sessions.
+        theta1 = wrapAngle(theta1);
+        theta2 = wrapAngle(theta2);
 
         // Publish state to the expander (it reads the previous sample).
         if (hasExpander) {
