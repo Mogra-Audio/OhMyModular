@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://vcvrack.com"><img src="https://img.shields.io/badge/VCV%20Rack-2.0+-brightgreen.svg"></a>
-  <a href="https://github.com/Mogra-Audio/OhMyModular/releases"><img src="https://img.shields.io/github/v/release/Mogra-Audio/OhMyModular-utils?label=release&color=4c8dff" alt="Latest release"></a>
+  <a href="https://github.com/Mogra-Audio/OhMyModular/releases"><img src="https://img.shields.io/github/v/release/Mogra-Audio/OhMyModular?label=release&color=4c8dff" alt="Latest release"></a>
   <a href="https://github.com/Mogra-Audio/OhMyModular/actions/workflows/status/Mogra-Audio/OhMyModular/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/Mogra-Audio/OhMyModular/build.yml" alt="Build"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-purple" alt="License GPL 3.0 or later"></a>
 </p>
