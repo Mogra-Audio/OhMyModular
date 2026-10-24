@@ -1,6 +1,6 @@
 # OhMyModular
 
-**A growing collection of VCV Rack modules built around physics and controlled chaos.**
+**Carefully crafted open-source VCV Rack modules with a twist.**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![VCV Rack](https://img.shields.io/badge/VCV%20Rack-2.0+-brightgreen.svg)](https://vcvrack.com)
@@ -27,18 +27,17 @@ Unlike traditional LFOs or random sources, OMP produces **mathematically-rich mo
 
 **OMP Features:**
 
-- **Real-time** physics simulation & animation of a double pendulum system
-- **Conservative** energy for constant motion & generation
-- **5** control knobs for initial conditions and behavior shaping
-- **2 INs:** CHAOS CV & RETRIG for external control (+2 with an expander module: TIME CV & SKEW CV)
-- **4 OUTs:** Angle CV outputs, smooth & discrete for each arm (+4 with an expander module)
-- **CHAOS** — recursive parameter that uses a “ghost” double pendulum to modulate the main one in the background. It pushes the simulation into a singularity and induces even more chaotic
-behavior. This allows you to get more sophisticated output voltage patterns 
-- **Expander** module to extend the possibilities
+- **Real-time** physics simulation & animation of a double pendulum system.
+- **Conservative** energy for constant motion & generation.
+- **5** control knobs for initial conditions and behavior shaping.
+- **2 INs:** CHAOS CV & RETRIG for external control (+2 with an expander module: TIME CV & SKEW CV).
+- **4 OUTs:** Angle CV outputs, smooth & discrete for each arm (+4 with an expander module).
+- **CHAOS** — recursive parameter that uses a “ghost” double pendulum to modulate the main one in the background. It pushes the simulation into an extreme condition and induces even more chaotic behavior. This allows you to get more sophisticated output voltage patterns.
+- **Expander** module to extend the possibilities.
 
 #### Themes
 
-Five themes are available from the context menu: Mono, Creme, Minty, Mage, and Love. The theme is saved with the patch, so a rack can contain modules with different themes. The expander follows the theme of the main module it is attached to.
+Five themes are available from the context menu: Mono, Creme, Minty, Mage, and Love. The theme is saved with the patch, so a rack can contain modules with different themes. The expander inherits the theme of the main module it is attached to.
 
 ### OhMyPendulum Expander
 
