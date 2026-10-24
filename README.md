@@ -1,10 +1,22 @@
-# OhMyModular
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero.png">
+    <img src="docs/images/hero.png" width="1000" alt="OhMyModular">
+  </picture>
+</p>
 
-**Carefully crafted open-source VCV Rack modules with a twist.**
+<h1 align="center">OhMyModular</h1>
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![VCV Rack](https://img.shields.io/badge/VCV%20Rack-2.0+-brightgreen.svg)](https://vcvrack.com)
-![Build Status](https://img.shields.io/github/actions/workflow/status/Mogra-Audio/OhMyModular/build.yml)
+<p align="center">
+  Carefully crafted VCV Rack modules with a twist.
+</p>
+
+<p align="center">
+  <a href="https://vcvrack.com"><img src="https://img.shields.io/badge/VCV%20Rack-2.0+-brightgreen.svg"></a>
+  <a href="https://github.com/Mogra-Audio/OhMyModular/releases"><img src="https://img.shields.io/github/v/release/Mogra-Audio/OhMyModular-utils?label=release&color=4c8dff" alt="Latest release"></a>
+  <a href="https://github.com/Mogra-Audio/OhMyModular/actions/workflows/status/Mogra-Audio/OhMyModular/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/Mogra-Audio/OhMyModular/build.yml" alt="Build"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-purple" alt="License GPL 3.0 or later"></a>
+</p>
 
 ---
 
@@ -12,20 +24,18 @@
 
 OhMyModular is a small, open-source collection of VCV Rack modules by Mogra Audio. The first release contains two modules: OhMyPendulum, a chaotic CV generator built on a real-time double pendulum simulation, and OhMyPendulum Expander, which adds CV control and Cartesian outputs to it.
 
-Most modulation sources are either periodic or random. A double pendulum is neither. It is deterministic, bounded, and extremely sensitive to its initial conditions, so it produces motion that never quite repeats. OhMyModular turns that motion into control voltages.
-
-The plugin is released under the GPL-3.0-or-later. Release builds are published on the Releases page; the source and development happen on GitHub.
-
 ---
 
 ## Modules Overview
 
-**OhMyPendulum** | Chaotic double pendulum CV generator module with a twist. 
+<h3 align="center">
+  <strong>• OhMyPendulum | Chaotic double pendulum CV generator module with a twist. •</strong>
+</h3>
 
 OMP is based on a double pendulum simulation, it transforms its angular motion to control voltage values. Each arm provides a separate cv value.
 Unlike traditional LFOs or random sources, OMP produces **mathematically-rich modulation** derived from real-time physics simulation using the 4th-order Runge-Kutta numerical integration method (RK4). The panel also includes a live animated **Double Pendulum** drawn directly on the module.
 
-**OMP Features:**
+**Features:**
 
 - **Real-time** physics simulation & animation of a double pendulum system.
 - **Conservative** energy for constant motion & generation.
@@ -39,9 +49,13 @@ Unlike traditional LFOs or random sources, OMP produces **mathematically-rich mo
 
 Five themes are available from the context menu: Mono, Creme, Minty, Mage, and Love. The theme is saved with the patch, so a rack can contain modules with different themes. The expander inherits the theme of the main module it is attached to.
 
-### OhMyPendulum Expander
+<br>
 
-OhMyPendulum Expander is a 6 HP module that attaches to the right of OhMyPendulum. It adds CV control over Time and Skew and exposes the Cartesian position of the pendulum as four outputs. It has no audio path of its own; it reads the state published by the main module.
+<h3 align="center">
+  <b>• OhMyPendulum Expander | Extends the possibilities of OhMyPendulum. •</b>
+</h3>
+
+OhMyPendulum Expander is a 6 HP module that attaches to the right of OhMyPendulum. It adds CV control over Time and Skew and exposes the Cartesian (XY) position of the pendulum as four outputs. It has no audio path of its own; it reads the state published by the main module.
 
 ---
 
@@ -170,11 +184,18 @@ the Free Software Foundation, either version 3 of the License, or
 ## Contact
 
 - GitHub: [Mogra Audio](https://github.com/Mogra-Audio)
-- Donate: [Boosty](https://boosty.to/keithrose/donate)
+- Support the project: [Boosty](https://boosty.to/keithrose/donate)
 
 ---
 
-⭐ Star this repo if you find it useful!
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/branding.png">
+    <img src="docs/images/branding.png" width="1000" alt="Branding">
+  </picture>
+</p>
+
+<br>
 
 <div align="center">
 
