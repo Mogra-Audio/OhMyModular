@@ -144,7 +144,7 @@ The project has a small Rack-free test target (`make test`) for the expander mat
 ---
 
 ## Documentation
-- [Modules Manual]()
+- [Modules Manual](docs/OhMyModular-Manual.pdf)
 - [VCV Rack Manual](https://vcvrack.com/manual/)
 - [Plugin Development Guide](https://vcvrack.com/manual/PluginDevelopmentTutorial)
 - [DSP Guide](https://vcvrack.com/manual/PluginGuide#DSP-library)
