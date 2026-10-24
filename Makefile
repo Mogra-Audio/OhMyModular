@@ -10,7 +10,12 @@ SOURCES += $(wildcard src/*.cpp)
 DISTRIBUTABLES += res
 DISTRIBUTABLES += LICENSE
 
+# Unit tests are Rack-free; only load the SDK for actual plugin targets.
+ifeq ($(filter test,$(MAKECMDGOALS)),)
 include $(RACK_DIR)/plugin.mk
+else
+CXX ?= c++
+endif
 
 # Rack-free unit tests
 TEST_SRC := $(wildcard tests/*.cpp)

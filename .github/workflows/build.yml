@@ -1,0 +1,132 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RACK_SDK_VERSION: "2.6.6"
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Rack-free tests
+        run: make test
+
+  build-macos:
+    name: macOS ${{ matrix.arch }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            sdk: mac-arm64
+          - runner: macos-15-intel
+            arch: x64
+            sdk: mac-x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install packaging tools
+        run: |
+          command -v jq >/dev/null || brew install jq
+          command -v zstd >/dev/null || brew install zstd
+      - name: Download Rack SDK
+        run: |
+          curl -fsSL -o Rack-SDK.zip \
+            "https://vcvrack.com/downloads/Rack-SDK-${RACK_SDK_VERSION}-${{ matrix.sdk }}.zip"
+          unzip -q Rack-SDK.zip
+      - name: Build plugin
+        run: make -j"$(sysctl -n hw.ncpu)" RACK_DIR="$PWD/Rack-SDK" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.sdk }}
+          path: dist/*.vcvplugin
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  build-linux:
+    name: Linux x64
+    needs: test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            jq zstd unzip rsync libgl1-mesa-dev libglu1-mesa-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - name: Download Rack SDK
+        run: |
+          curl -fsSL -o Rack-SDK.zip \
+            "https://vcvrack.com/downloads/Rack-SDK-${RACK_SDK_VERSION}-lin-x64.zip"
+          unzip -q Rack-SDK.zip
+      - name: Build plugin
+        run: make -j"$(nproc)" RACK_DIR="$PWD/Rack-SDK" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lin-x64
+          path: dist/*.vcvplugin
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  build-windows:
+    name: Windows x64
+    needs: test
+    runs-on: windows-2022
+    steps:
+      - name: Disable CRLF conversion
+        run: git config --global core.autocrlf input
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            jq
+            zstd
+            unzip
+            curl
+      - name: Run Rack-free tests
+        shell: msys2 {0}
+        run: make test CXX=g++
+      - name: Download Rack SDK
+        shell: msys2 {0}
+        run: |
+          curl -fsSL -o Rack-SDK.zip \
+            "https://vcvrack.com/downloads/Rack-SDK-${RACK_SDK_VERSION}-win-x64.zip"
+          unzip -q Rack-SDK.zip
+      - name: Build plugin
+        shell: msys2 {0}
+        run: make -j"$(nproc)" RACK_DIR="$PWD/Rack-SDK" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-x64
+          path: dist/*.vcvplugin
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
