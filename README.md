@@ -1,7 +1,8 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-transparent.png">
-    <img src="docs/images/hero-transparent-light.png" width="1000" alt="OhMyModular">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/hero-transparent-light.png">
+    <img src="docs/images/hero-transparent.png" width="1000" alt="OhMyModular">
   </picture>
 </p>
 
@@ -191,7 +192,8 @@ the Free Software Foundation, either version 3 of the License, or
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/branding-transparent.png">
-    <img src="docs/images/branding-transparent-light.png" width="1000" alt="Branding">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/branding-transparent-light.png">
+    <img src="docs/images/branding-transparent.png" width="1000" alt="Branding">
   </picture>
 </p>
 
