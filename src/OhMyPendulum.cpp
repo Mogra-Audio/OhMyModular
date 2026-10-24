@@ -4,6 +4,7 @@
 #include "dsp/ArmKinematics.hpp"
 #include <cmath>
 #include <atomic>
+#include <cstdint>
 
 ////////////////////////////////////////////////////////////////////////////////
 /// DSP CONSTANTS
@@ -34,6 +35,10 @@ static constexpr int GHOST_SUBSTEPS_MAX = 5;
 
 // Expander CV smoothing (seconds): hides the jump when a cable is plugged.
 static constexpr float CV_SMOOTH_TIME = 0.005f;
+
+// Angle knob hold lease (seconds). The UI refreshes it while the knob is
+// physically down, so a lost mouse-up expires instead of freezing forever.
+static constexpr double ANGLE_HOLD_LEASE = 0.5;
 
 // Energy-target settle
 static constexpr double SETTLE_TIME = 6.0;    // hard cap; typical convergence ~1.3s
@@ -113,8 +118,9 @@ struct OhMyPendulum : Module {
     bool simulationRunning = false;
     std::atomic<bool> resetStateRequested{true};
 
-    // Angle knob hold (set from UI thread, read from audio thread)
-    std::atomic<int> angleHoldCount{0};
+    // Absolute audio frame until which the Angle knob hold stays valid. The UI
+    // refreshes it while the knob is down; the audio thread only compares it.
+    std::atomic<int64_t> angleHoldUntilFrame{0};
 
     // Chaos state
     bool chaosWasActive = false;
@@ -373,7 +379,8 @@ struct OhMyPendulum : Module {
     }
 
     /// USER ACTIONS
-    bool handleUserActions(float angle1Param, float angle2Param, double sampleTime) {
+    bool handleUserActions(float angle1Param, float angle2Param, double sampleTime,
+                           int64_t frame) {
         bool stateExplicitlySet = false;
 
         // Retrig (Schmitt rising edge)
@@ -388,7 +395,7 @@ struct OhMyPendulum : Module {
         }
 
         // Angle value change (dropdown / precise keyboard entry)
-        bool angleHeld = angleHoldCount.load(std::memory_order_relaxed) > 0;
+        bool angleHeld = frame < angleHoldUntilFrame.load(std::memory_order_relaxed);
         bool angleValueChanged =
             (std::abs(angle1Param - lastAngle1Param) > 1e-6f) ||
             (std::abs(angle2Param - lastAngle2Param) > 1e-6f);
@@ -513,7 +520,8 @@ struct OhMyPendulum : Module {
         double m2 = 0.5 + smoothedSkew * 1.0;
 
         // User actions (retrigger / angle change / knob hold / launch)
-        bool stateExplicitlySet = handleUserActions(angle1Param, angle2Param, args.sampleTime);
+        bool stateExplicitlySet = handleUserActions(angle1Param, angle2Param,
+                                                    args.sampleTime, args.frame);
 
         // Chaos energy tracking
         if (chaosActive) {
@@ -582,6 +590,7 @@ struct OhMyPendulum : Module {
     void onReset(const ResetEvent& e) override {
         Module::onReset(e);
         resetStateRequested.store(true);
+        angleHoldUntilFrame.store(0, std::memory_order_relaxed);
     }
 
     void onRandomize(const RandomizeEvent& e) override {
@@ -625,30 +634,58 @@ struct OhMyPendulum : Module {
 
 struct AngleKnob : app::SvgKnob {
     OhMyPendulum* mod = nullptr;
-    bool isHeld = false; // UI-thread only, guards against double-decrement
+    bool isHeld = false; // UI-thread only
+
+    void setHold(bool held) {
+        isHeld = held;
+        if (!mod) return;
+        int64_t until = 0;
+        if (held && APP->engine) {
+            until = APP->engine->getFrame()
+                  + (int64_t)(ANGLE_HOLD_LEASE * APP->engine->getSampleRate());
+        }
+        mod->angleHoldUntilFrame.store(until, std::memory_order_relaxed);
+    }
 
     void onButton(const ButtonEvent& e) override {
         SvgKnob::onButton(e);
-        if (!mod) return;
-        if (e.button == GLFW_MOUSE_BUTTON_LEFT) {
-            if (e.action == GLFW_PRESS && !isHeld) {
-                isHeld = true;
-                mod->angleHoldCount.fetch_add(1, std::memory_order_relaxed);
-            }
-            if (e.action == GLFW_RELEASE && isHeld) {
-                isHeld = false;
-                mod->angleHoldCount.fetch_sub(1, std::memory_order_relaxed);
-            }
+        if (!mod || e.button != GLFW_MOUSE_BUTTON_LEFT) return;
+        if (e.action == GLFW_PRESS) {
+            setHold(true);
+        } else if (e.action == GLFW_RELEASE) {
+            setHold(false);
         }
     }
 
     // Safety: user drags outside widget and releases
     void onDragEnd(const DragEndEvent& e) override {
         SvgKnob::onDragEnd(e);
-        if (mod && isHeld) {
-            isHeld = false;
-            mod->angleHoldCount.fetch_sub(1, std::memory_order_relaxed);
+        if (e.button == GLFW_MOUSE_BUTTON_LEFT) setHold(false);
+    }
+
+    void step() override {
+        SvgKnob::step();
+        if (!isHeld || !mod) return;
+        if (!APP->window || !APP->window->win || !APP->engine) {
+            setHold(false);
+            return;
         }
+        // A lost mouse-up must not freeze the pendulum forever. The physical
+        // button state is the source of truth, not the event stream.
+        bool focused = glfwGetWindowAttrib(APP->window->win, GLFW_FOCUSED) != 0;
+        bool pressed = glfwGetMouseButton(APP->window->win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        if (!focused || !pressed) {
+            setHold(false);
+            return;
+        }
+        // If the UI stopped stepping long enough for the lease to lapse, do not
+        // revive it from a possibly stale pressed state.
+        if (mod->angleHoldUntilFrame.load(std::memory_order_relaxed)
+                <= APP->engine->getFrame()) {
+            setHold(false);
+            return;
+        }
+        setHold(true);
     }
 };
 
