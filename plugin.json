@@ -5,7 +5,7 @@
   "license": "GPL-3.0-or-later",
   "brand": "Mogra Audio",
   "author": "keithrosseau",
-  "description": "Open-source modules for VCV Rack.",
+  "description": "Carefully crafted open-source VCV Rack modules with a twist",
   "authorUrl": "https://mogra.audio",
   "pluginUrl": "https://github.com/Mogra-Audio/OhMyModular",
   "manualUrl": "https://github.com/Mogra-Audio/OhMyModular#readme",
@@ -18,16 +18,18 @@
       "slug": "OhMyPendulum",
       "name": "OhMyPendulum",
       "description": "Chaotic double pendulum CV generator with a twist.",
+      "manualUrl": "https://github.com/Mogra-Audio/OhMyModular#readme",
       "tags": ["Random", "Physical Modeling"],
-      "keywords": ["omp", "pendulum", "chaos"]
+      "keywords": "omp pendulum chaos"
     },
 
     {
       "slug": "OhMyPendulumExpander",
       "name": "OhMyPendulum Expander",
       "description": "Adds Time and Skew CV inputs & XY coordinate outputs to OhMyPendulum.",
+      "manualUrl": "https://github.com/Mogra-Audio/OhMyModular#readme",
       "tags": ["Expander"],
-      "keywords": ["omp", "pendulum", "chaos"]
+      "keywords": "omp pendulum chaos expander"
     }
   ]
 }
