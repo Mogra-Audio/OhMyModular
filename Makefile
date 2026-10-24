@@ -13,8 +13,11 @@ DISTRIBUTABLES += LICENSE
 include $(RACK_DIR)/plugin.mk
 
 # Rack-free unit tests
+TEST_SRC := $(wildcard tests/*.cpp)
+TEST_FLAGS ?=
+
 .PHONY: test
 test:
 	@mkdir -p build
-	$(CXX) -std=c++11 -O2 -Wall -Wextra -Isrc tests/test_expander_math.cpp -o build/test_expander_math
-	./build/test_expander_math
+	$(CXX) -std=c++11 -O2 -Wall -Wextra $(TEST_FLAGS) -Isrc $(TEST_SRC) -o build/test_ohmymodular
+	./build/test_ohmymodular

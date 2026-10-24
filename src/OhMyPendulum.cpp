@@ -1,67 +1,17 @@
 #include "plugin.hpp"
 #include "Theme.hpp"
 #include "ExpanderMessage.hpp"
-#include "dsp/ArmKinematics.hpp"
-#include "dsp/Angle.hpp"
-#include <cmath>
+#include "dsp/PendulumCore.hpp"
+
 #include <atomic>
 #include <cstdint>
 
-////////////////////////////////////////////////////////////////////////////////
-/// DSP CONSTANTS
-////////////////////////////////////////////////////////////////////////////////
-
-static constexpr double G = 9.81;
-// Shared with the expander's coordinate mapping.
-static constexpr double L1 = ARM_L1;
-static constexpr double L2 = ARM_L2;
-static constexpr double M1_DFLT = 1.0;
-static constexpr double M2_DFLT = 1.0;
-static constexpr double ANGLE_TO_VOLT = 5.0 / M_PI;
-static constexpr double IMPULSE_1 = 0.05;
-static constexpr double IMPULSE_2 = 0.03;
-static constexpr float KNOB_MIN_ANGLE = -0.83f * M_PI;
-static constexpr float KNOB_MAX_ANGLE =  0.83f * M_PI;
-
-// Chaos
-static constexpr double GHOST_THETA1 = 2.09439510239;
-static constexpr double GHOST_THETA2 = 2.79252680319;
-static constexpr double CHAOS_DEAD = 0.1;
-static constexpr double CHAOS_INJ_ANGLE = 0.8;
-static constexpr double CHAOS_INJ_MOM = 6.0;
-static constexpr double CHAOS_REFERENCE_SAMPLE_RATE = 48000.0;
-static constexpr double P_MAX = 25.0;
-static constexpr double MASS_EPS = 1e-6;
-static constexpr int GHOST_SUBSTEPS_MAX = 5;
-
-// Expander CV smoothing (seconds): hides the jump when a cable is plugged.
-static constexpr float CV_SMOOTH_TIME = 0.005f;
-
-// Angle knob hold lease (seconds). The UI refreshes it while the knob is
-// physically down, so a lost mouse-up expires instead of freezing forever.
-static constexpr double ANGLE_HOLD_LEASE = 0.5;
-
-// Energy-target settle
-static constexpr double SETTLE_TIME = 6.0;    // hard cap; typical convergence ~1.3s
-static constexpr double SETTLE_RATE = 8.0;    // convergence speed (1/sec), tau = 0.125s
-static constexpr double ENERGY_EPS  = 0.01;   // "close enough" threshold
-// Break a pendulum that is balanced at the top with (almost) no momentum.
-static constexpr double STUCK_TIME = 0.25;    // seconds of stillness before a nudge
-static constexpr double STUCK_MOMENTUM = 0.01;
-static constexpr double NUDGE_ANGLE = 0.01;   // radians
-
-// SVG link dimensions
+// UI-only constants.
+static constexpr float KNOB_MIN_ANGLE = -0.83f * (float)kPi;
+static constexpr float KNOB_MAX_ANGLE =  0.83f * (float)kPi;
+static constexpr double ANGLE_HOLD_LEASE = 0.5; // seconds
 static constexpr float LINK_W_MM = 1.162f;
 static constexpr float LINK_H_MM = 4.089f;
-
-////////////////////////////////////////////////////////////////////////////////
-/// HELPERS
-////////////////////////////////////////////////////////////////////////////////
-
-// One-pole smoothing; alpha is precomputed per sample rate.
-static inline float approach(float current, float target, float alpha) {
-    return current + (target - current) * alpha;
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 /// MODULE
@@ -86,62 +36,20 @@ struct OhMyPendulum : Module {
     PendulumToExpanderMsg toExpander[2];
     std::atomic<bool> timeCvActive{false};
     std::atomic<bool> skewCvActive{false};
-    float smoothedTime = 0.5f;
-    float smoothedSkew = 0.5f;
-    float cvSmoothAlpha = 0.f;
 
-    // Pendulum state
-    double theta1 = 0.0;
-    double theta2 = 0.0;
-    double pTheta1 = 0.0;
-    double pTheta2 = 0.0;
+    PendulumCore core;
 
     // Display mirrors (audio thread writes, UI thread reads)
     std::atomic<double> dispTheta1{0.0};
     std::atomic<double> dispTheta2{0.0};
 
-    // Last applied masses (SKEW omega preservation)
-    double lastM1 = M1_DFLT;
-    double lastM2 = M2_DFLT;
-
-    // Ghost pendulum
-    double gTheta1 = GHOST_THETA1;
-    double gTheta2 = GHOST_THETA2;
-    double gP1 = 0.0;
-    double gP2 = 0.0;
-
-    bool simulationRunning = false;
     std::atomic<bool> resetStateRequested{true};
 
     // Absolute audio frame until which the Angle knob hold stays valid. The UI
     // refreshes it while the knob is down; the audio thread only compares it.
     std::atomic<int64_t> angleHoldUntilFrame{0};
 
-    // Chaos state
-    bool chaosWasActive = false;
-
-    // Energy-target settle
-    double preChaosEnergy = 0.0;
-    double settleTimeRemaining = 0.0;
-    double settleStuckTime = 0.0;
-
-    // Retrigger
     dsp::SchmittTrigger retrigTrigger;
-
-    // Angle value tracking — catches dropdown / precise entry
-    float lastAngle1Param = 0.f;
-    float lastAngle2Param = 0.f;
-
-    // Launch delay after knob release (seconds)
-    double stableTime = 0.0;
-    static constexpr double LAUNCH_DELAY_SEC = 0.085;
-
-    // Output slew limiters (click suppression)
-    float slewOut1 = 0.f;
-    float slewOut2 = 0.f;
-    float slewOut3 = 0.f;
-    float slewOut4 = 0.f;
-    static constexpr double SLEW_RATE = 500.0; // max V/s
 
     OhMyPendulum() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -166,325 +74,23 @@ struct OhMyPendulum : Module {
         // Expander message buffers (sender owns both halves of the pair).
         rightExpander.producerMessage = &toExpander[0];
         rightExpander.consumerMessage = &toExpander[1];
-
-        smoothedTime = params[PARAM_TIME].getValue();
-        smoothedSkew = params[PARAM_SKEW].getValue();
-        // Fallback until the engine reports the actual sample rate.
-        cvSmoothAlpha = 1.f - std::exp(-(1.f / 48000.f) / CV_SMOOTH_TIME);
     }
 
     void onSampleRateChange(const SampleRateChangeEvent& e) override {
-        cvSmoothAlpha = 1.f - std::exp(-e.sampleTime / CV_SMOOTH_TIME);
-    }
-
-    /// HAMILTONIAN FORMALISM
-    void computeDerivatives(double th1, double th2, double p1, double p2,
-                            double m1, double m2, double timeScale,
-                            double& dTh1, double& dTh2, double& dP1, double& dP2) {
-        double sin1 = std::sin(th1);
-        double sin2 = std::sin(th2);
-        double cosDiff = std::cos(th1 - th2);
-        double sinDiff = std::sin(th1 - th2);
-        double I1 = (m1 + m2) * L1 * L1;
-        double I2 = m2 * L2 * L2;
-        double I12 = m2 * L1 * L2;
-        double denom = I1 * I2 - I12 * I12 * cosDiff * cosDiff;
-        denom = std::max(denom, 1e-10);
-        double omega1 = (I2 * p1 - I12 * cosDiff * p2) / denom;
-        double omega2 = (I1 * p2 - I12 * cosDiff * p1) / denom;
-        dTh1 = omega1 * timeScale;
-        dTh2 = omega2 * timeScale;
-        double coupling = I12 * omega1 * omega2 * sinDiff;
-        dP1 = (-coupling - (m1 + m2) * G * L1 * sin1) * timeScale;
-        dP2 = ( coupling - m2 * G * L2 * sin2) * timeScale;
-    }
-
-    /// RK4 INTEGRATION
-    void rk4StepState(double& th1, double& th2, double& p1, double& p2,
-                      double dt, double m1, double m2, double timeScale) {
-        double dT1_1, dT2_1, dP1_1, dP2_1;
-        computeDerivatives(th1, th2, p1, p2, m1, m2, timeScale, dT1_1, dT2_1, dP1_1, dP2_1);
-        double dT1_2, dT2_2, dP1_2, dP2_2;
-        computeDerivatives(th1 + 0.5*dt*dT1_1, th2 + 0.5*dt*dT2_1,
-                           p1  + 0.5*dt*dP1_1, p2  + 0.5*dt*dP2_1,
-                           m1, m2, timeScale, dT1_2, dT2_2, dP1_2, dP2_2);
-        double dT1_3, dT2_3, dP1_3, dP2_3;
-        computeDerivatives(th1 + 0.5*dt*dT1_2, th2 + 0.5*dt*dT2_2,
-                           p1  + 0.5*dt*dP1_2, p2  + 0.5*dt*dP2_2,
-                           m1, m2, timeScale, dT1_3, dT2_3, dP1_3, dP2_3);
-        double dT1_4, dT2_4, dP1_4, dP2_4;
-        computeDerivatives(th1 + dt*dT1_3, th2 + dt*dT2_3,
-                           p1  + dt*dP1_3, p2  + dt*dP2_3,
-                           m1, m2, timeScale, dT1_4, dT2_4, dP1_4, dP2_4);
-        th1 += dt * (dT1_1 + 2.0*dT1_2 + 2.0*dT1_3 + dT1_4) / 6.0;
-        th2 += dt * (dT2_1 + 2.0*dT2_2 + 2.0*dT2_3 + dT2_4) / 6.0;
-        p1  += dt * (dP1_1 + 2.0*dP1_2 + 2.0*dP1_3 + dP1_4) / 6.0;
-        p2  += dt * (dP2_1 + 2.0*dP2_2 + 2.0*dP2_3 + dP2_4) / 6.0;
-    }
-
-    /// GHOST STEP
-    void stepGhost(double dt, double m1, double m2, int substeps) {
-        double gdt = dt / (double)substeps;
-        for (int i = 0; i < substeps; i++) {
-            double dT1, dT2, dP1, dP2;
-            computeDerivatives(gTheta1, gTheta2, gP1, gP2, m1, m2, 1.0,
-                               dT1, dT2, dP1, dP2);
-            gTheta1 += gdt * dT1;
-            gTheta2 += gdt * dT2;
-            gP1     += gdt * dP1;
-            gP2     += gdt * dP2;
-        }
-        checkGhostStability();
-        gTheta1 = wrapAngle(gTheta1);
-        gTheta2 = wrapAngle(gTheta2);
-    }
-
-    /// CHAOS INJECTION
-    void applyChaos(double chaos, double sampleTime) {
-        if (chaos <= CHAOS_DEAD) return;
-        double eff = (chaos - CHAOS_DEAD) / (1.0 - CHAOS_DEAD);
-        double inj = eff * eff * eff * eff;
-        inj *= sampleTime * CHAOS_REFERENCE_SAMPLE_RATE;
-        theta1 += inj * CHAOS_INJ_ANGLE * std::sin(gTheta1);
-        theta2 += inj * CHAOS_INJ_ANGLE * std::sin(gTheta2);
-        pTheta1 += inj * CHAOS_INJ_MOM * gP1;
-        pTheta2 += inj * CHAOS_INJ_MOM * gP2;
-        pTheta1 = P_MAX * std::tanh(pTheta1 / P_MAX);
-        pTheta2 = P_MAX * std::tanh(pTheta2 / P_MAX);
-    }
-
-    /// FULL MECHANICAL ENERGY of the double pendulum
-    double computeEnergy(double th1, double th2, double p1, double p2,
-                         double m1, double m2) {
-        double cosDiff = std::cos(th1 - th2);
-        double I1  = (m1 + m2) * L1 * L1;
-        double I2  = m2 * L2 * L2;
-        double I12 = m2 * L1 * L2;
-        double denom = std::max(I1 * I2 - I12 * I12 * cosDiff * cosDiff, 1e-10);
-        double omega1 = (I2 * p1 - I12 * cosDiff * p2) / denom;
-        double omega2 = (I1 * p2 - I12 * cosDiff * p1) / denom;
-        double kinetic   = 0.5 * (p1 * omega1 + p2 * omega2);
-        double potential = -(m1 + m2) * G * L1 * std::cos(th1)
-                           - m2 * G * L2 * std::cos(th2);
-        return kinetic + potential;
-    }
-
-    /// ENERGY-TARGET SETTLE
-    ///
-    /// A conservative pendulum keeps whatever energy chaos leaves in it, so the
-    /// servo removes or injects kinetic energy until the total matches the value
-    /// captured when chaos was engaged. While the target is below the current
-    /// potential (pendulum high up) only damping is possible; once it drops, the
-    /// same servo can add energy back as well.
-    void energySettle(double sampleTime, double m1, double m2) {
-        if (settleTimeRemaining <= 0.0) return;
-
-        double E_cur = computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2);
-        double V_cur = -(m1 + m2) * G * L1 * std::cos(theta1)
-                       - m2 * G * L2 * std::cos(theta2);
-        double dE = E_cur - preChaosEnergy;
-        double momentumFactor = 1.0;
-        bool nudged = false;
-
-        if (std::abs(dE) > ENERGY_EPS) {
-            if (V_cur > preChaosEnergy) {
-                // Target is below the potential at this pose: shed kinetic energy
-                // and let gravity bring the pendulum down.
-                momentumFactor = std::exp(-SETTLE_RATE * sampleTime);
-                pTheta1 *= momentumFactor;
-                pTheta2 *= momentumFactor;
-
-                // A pendulum balanced at the top would stay there forever; a
-                // nudge after a short stall breaks the unstable equilibrium.
-                bool nearlyStill = std::abs(pTheta1) < STUCK_MOMENTUM &&
-                                   std::abs(pTheta2) < STUCK_MOMENTUM;
-                settleStuckTime = nearlyStill ? settleStuckTime + sampleTime : 0.0;
-                if (settleStuckTime >= STUCK_TIME) {
-                    theta1 += NUDGE_ANGLE;
-                    settleStuckTime = 0.0;
-                    nudged = true;
-                }
-            } else {
-                // Target kinetic energy is reachable: scale momenta both ways.
-                double T_target = std::max(preChaosEnergy - V_cur, 0.0);
-                double T_cur = E_cur - V_cur;
-                if (T_cur > 1e-12) {
-                    double scale = std::sqrt(T_target / T_cur);
-                    // Bound the raw ratio: near-zero kinetic energy must not
-                    // produce a huge single-sample jump.
-                    scale = std::min(std::max(scale, 0.5), 2.0);
-                    double alpha = 1.0 - std::exp(-SETTLE_RATE * sampleTime);
-                    scale = 1.0 + (scale - 1.0) * alpha;
-                    pTheta1 *= scale;
-                    pTheta2 *= scale;
-                    momentumFactor = scale;
-                }
-            }
-        }
-
-        settleTimeRemaining -= sampleTime;
-        // Kinetic energy scales with the square of the momentum factor, so the
-        // post-correction energy needs no second full evaluation. The nudge moves
-        // the angles, so only that rare sample is recomputed.
-        double E_post = nudged
-            ? computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2)
-            : V_cur + (E_cur - V_cur) * momentumFactor * momentumFactor;
-        if (settleTimeRemaining <= 0.0 ||
-            std::abs(E_post - preChaosEnergy) < ENERGY_EPS) {
-            settleTimeRemaining = 0.0;
-        }
-    }
-
-    /// STABILITY CHECK (MAIN+GHOST)
-    void checkStability() {
-        if (std::isnan(theta1)  || std::isinf(theta1)  ||
-            std::isnan(theta2)  || std::isinf(theta2)  ||
-            std::isnan(pTheta1) || std::isinf(pTheta1) ||
-            std::isnan(pTheta2) || std::isinf(pTheta2)) {
-            theta1 = theta2 = pTheta1 = pTheta2 = 0.0;
-        }
-    }
-
-    void checkGhostStability() {
-        if (std::isnan(gTheta1) || std::isinf(gTheta1) ||
-            std::isnan(gTheta2) || std::isinf(gTheta2) ||
-            std::isnan(gP1)     || std::isinf(gP1)     ||
-            std::isnan(gP2)     || std::isinf(gP2)) {
-            gTheta1 = GHOST_THETA1;
-            gTheta2 = GHOST_THETA2;
-            gP1 = gP2 = 0.0;
-        }
-    }
-
-    void initializeStateFromAngles(float angle1Param, float angle2Param) {
-        theta1 = angle1Param * 2.0 * M_PI;
-        theta2 = angle2Param * 2.0 * M_PI;
-        pTheta1 = IMPULSE_1;
-        pTheta2 = IMPULSE_2;
-        simulationRunning = true;
-        stableTime = 0.0;
-        settleTimeRemaining = 0.0;
-        settleStuckTime = 0.0;
-        chaosWasActive = false;
-        slewOut1 = slewOut2 = slewOut3 = slewOut4 = 0.f;
-    }
-
-    /// TIME SCALE CURVE
-    static double computeTimeScale(float timeParam) {
-        return 0.2 + timeParam * 1.6
-             + std::max(0.0f, timeParam - 0.5f) * 10.4;
-    }
-
-    /// USER ACTIONS
-    bool handleUserActions(float angle1Param, float angle2Param, double sampleTime,
-                           int64_t frame) {
-        bool stateExplicitlySet = false;
-
-        // Retrig (Schmitt rising edge)
-        if (retrigTrigger.process(inputs[INPUT_1_RETRIG].getVoltage())) {
-            theta1 = angle1Param * 2.0 * M_PI;
-            theta2 = angle2Param * 2.0 * M_PI;
-            pTheta1 = IMPULSE_1;
-            pTheta2 = IMPULSE_2;
-            simulationRunning = true;
-            stableTime = 0.0;
-            stateExplicitlySet = true;
-        }
-
-        // Angle value change (dropdown / precise keyboard entry)
-        bool angleHeld = frame < angleHoldUntilFrame.load(std::memory_order_relaxed);
-        bool angleValueChanged =
-            (std::abs(angle1Param - lastAngle1Param) > 1e-6f) ||
-            (std::abs(angle2Param - lastAngle2Param) > 1e-6f);
-        lastAngle1Param = angle1Param;
-        lastAngle2Param = angle2Param;
-        if (angleValueChanged && !angleHeld) {
-            theta1 = angle1Param * 2.0 * M_PI;
-            theta2 = angle2Param * 2.0 * M_PI;
-            pTheta1 = IMPULSE_1;
-            pTheta2 = IMPULSE_2;
-            simulationRunning = true;
-            stableTime = 0.0;
-            stateExplicitlySet = true;
-        }
-
-        // Angle knob hold / launch countdown
-        if (angleHeld) {
-            theta1 = angle1Param * 2.0 * M_PI;
-            theta2 = angle2Param * 2.0 * M_PI;
-            pTheta1 = 0.0;
-            pTheta2 = 0.0;
-            simulationRunning = false;
-            stableTime = 0.0;
-            stateExplicitlySet = true;
-        } else if (!simulationRunning) {
-            stableTime += sampleTime;
-            if (stableTime >= LAUNCH_DELAY_SEC) {
-                simulationRunning = true;
-                stableTime = 0.0;
-                pTheta1 = IMPULSE_1;
-                pTheta2 = IMPULSE_2;
-            }
-        }
-
-        return stateExplicitlySet;
-    }
-
-    /// SKEW: angular velocity preservation on mass change
-    void updateMasses(double m1, double m2) {
-        if (std::abs(m1 - lastM1) > MASS_EPS || std::abs(m2 - lastM2) > MASS_EPS) {
-            double cosDiff = std::cos(theta1 - theta2);
-            double I1o = (lastM1 + lastM2) * L1 * L1;
-            double I2o = lastM2 * L2 * L2;
-            double I12o = lastM2 * L1 * L2;
-            double denom = std::max(I1o * I2o - I12o * I12o * cosDiff * cosDiff, 1e-10);
-            double w1 = (I2o * pTheta1 - I12o * cosDiff * pTheta2) / denom;
-            double w2 = (I1o * pTheta2 - I12o * cosDiff * pTheta1) / denom;
-            double I1n = (m1 + m2) * L1 * L1;
-            double I2n = m2 * L2 * L2;
-            double I12n = m2 * L1 * L2;
-            pTheta1 = I1n * w1 + I12n * cosDiff * w2;
-            pTheta2 = I2n * w2 + I12n * cosDiff * w1;
-            lastM1 = m1;
-            lastM2 = m2;
-        }
-    }
-
-    /// OUTPUT (no blend, just slew; theta is wrapped after integration)
-    void renderOutputs(double sampleTime) {
-        double theta1Norm = theta1;
-        double theta2Norm = theta2;
-
-        float target1 = clamp((float)(theta1Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
-        float target4 = clamp((float)(theta2Norm * ANGLE_TO_VOLT), -5.0f, 5.0f);
-        float discreteStep = 1.0f / 12.0f;
-        float target2 = clamp(std::round((float)(theta1Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
-        float target3 = clamp(std::round((float)(theta2Norm * ANGLE_TO_VOLT) / discreteStep) * discreteStep, -5.0f, 5.0f);
-
-        // Slew limit: click suppression
-        float slewLimit = (float)(SLEW_RATE * sampleTime);
-        slewOut1 += clamp(target1 - slewOut1, -slewLimit, slewLimit);
-        slewOut2 += clamp(target2 - slewOut2, -slewLimit, slewLimit);
-        slewOut3 += clamp(target3 - slewOut3, -slewLimit, slewLimit);
-        slewOut4 += clamp(target4 - slewOut4, -slewLimit, slewLimit);
-        outputs[OUTPUT_1].setVoltage(slewOut1);
-        outputs[OUTPUT_2].setVoltage(slewOut2);
-        outputs[OUTPUT_3].setVoltage(slewOut3);
-        outputs[OUTPUT_4].setVoltage(slewOut4);
+        core.onSampleRateChange(e.sampleTime);
     }
 
     void process(const ProcessArgs& args) override {
-        // Read params
-        float angle1Param = params[PARAM_ANGLE1].getValue();
-        float angle2Param = params[PARAM_ANGLE2].getValue();
-        float timeParam   = params[PARAM_TIME].getValue();
-        float skewParam   = params[PARAM_SKEW].getValue();
-        float chaosParam  = params[PARAM_CHAOS].getValue();
+        const float angle1Param = params[PARAM_ANGLE1].getValue();
+        const float angle2Param = params[PARAM_ANGLE2].getValue();
+        const float timeParam = params[PARAM_TIME].getValue();
+        const float skewParam = params[PARAM_SKEW].getValue();
+        const float chaosParam = params[PARAM_CHAOS].getValue();
 
         // Expander link: the right-hand expander owns the Time/Skew CV inputs.
         // A patched input takes over the matching knob; smoothing hides the jump.
         Module* expander = rightExpander.module;
-        bool hasExpander = expander && expander->model == modelOhMyPendulumExpander;
+        const bool hasExpander = expander && expander->model == modelOhMyPendulumExpander;
         bool timeCvConnected = false;
         bool skewCvConnected = false;
         float timeCv = 0.f;
@@ -500,93 +106,48 @@ struct OhMyPendulum : Module {
         }
         timeCvActive.store(timeCvConnected, std::memory_order_relaxed);
         skewCvActive.store(skewCvConnected, std::memory_order_relaxed);
-        smoothedTime = approach(smoothedTime, timeCvConnected ? timeCv : timeParam, cvSmoothAlpha);
-        smoothedSkew = approach(smoothedSkew, skewCvConnected ? skewCv : skewParam, cvSmoothAlpha);
 
         if (resetStateRequested.exchange(false)) {
-            initializeStateFromAngles(angle1Param, angle2Param);
+            core.reset(angle1Param, angle2Param);
         }
 
-        // Chaos CV
-        float chaosCV = inputs[INPUT_2_CHAOS].getVoltage() / 5.0f;
-        double chaos = clamp(chaosParam + chaosCV, 0.f, 1.f);
-        bool chaosActive = chaos > CHAOS_DEAD;
+        const bool retrigger = retrigTrigger.process(inputs[INPUT_1_RETRIG].getVoltage());
+        const bool angleHeld = args.frame < angleHoldUntilFrame.load(std::memory_order_relaxed);
 
-        // Masses (SKEW) — computed early, needed for energy calculation
-        double m1 = 0.5 + (1.0 - smoothedSkew) * 1.0;
-        double m2 = 0.5 + smoothedSkew * 1.0;
+        PendulumCore::Inputs in;
+        in.angle1 = angle1Param;
+        in.angle2 = angle2Param;
+        in.time = timeParam;
+        in.skew = skewParam;
+        in.timeCv = timeCv;
+        in.skewCv = skewCv;
+        in.timeCvActive = timeCvConnected;
+        in.skewCvActive = skewCvConnected;
+        in.chaos = chaosAmount(chaosParam, inputs[INPUT_2_CHAOS].getVoltage());
+        in.retrigger = retrigger;
+        in.angleHeld = angleHeld;
 
-        // User actions (retrigger / angle change / knob hold / launch)
-        bool stateExplicitlySet = handleUserActions(angle1Param, angle2Param,
-                                                    args.sampleTime, args.frame);
-
-        // Chaos energy tracking
-        if (chaosActive) {
-            if (!chaosWasActive) {
-                // Entering chaos: capture current energy as return target
-                preChaosEnergy = computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2);
-                settleTimeRemaining = 0.0;
-                settleStuckTime = 0.0;
-            }
-            // Explicit user action during chaos updates the return target
-            if (stateExplicitlySet) {
-                preChaosEnergy = computeEnergy(theta1, theta2, pTheta1, pTheta2, m1, m2);
-            }
-        } else if (chaosWasActive) {
-            // Exiting chaos: begin energy settle
-            settleTimeRemaining = SETTLE_TIME;
-            settleStuckTime = 0.0;
-        }
-        chaosWasActive = chaosActive;
-
-        // User action while settling cancels the settle
-        if (stateExplicitlySet && !chaosActive) {
-            settleTimeRemaining = 0.0;
-            settleStuckTime = 0.0;
-        }
-
-        // Mass omega preservation (after user actions, before integration)
-        updateMasses(m1, m2);
-
-        // Ghost pendulum
-        int substeps = 1 + (int)(chaos * (GHOST_SUBSTEPS_MAX - 1));
-        stepGhost(args.sampleTime, m1, m2, substeps);
-
-        // Main integration
-        if (simulationRunning) {
-            rk4StepState(theta1, theta2, pTheta1, pTheta2,
-                         args.sampleTime, m1, m2, computeTimeScale(smoothedTime));
-        }
-
-        // Chaos injection + energy settle
-        applyChaos(chaos, args.sampleTime);
-        energySettle(args.sampleTime, m1, m2);
-
-        // Stability
-        checkStability();
-
-        // The Hamiltonian is 2*pi-periodic, so wrapping preserves the motion
-        // and keeps the UI/expander trig arguments bounded over long sessions.
-        theta1 = wrapAngle(theta1);
-        theta2 = wrapAngle(theta2);
+        core.process(in, args.sampleTime);
 
         // Publish state to the expander (it reads the previous sample).
         if (hasExpander) {
             auto* msg = static_cast<PendulumToExpanderMsg*>(rightExpander.producerMessage);
             if (msg) {
-                msg->theta1 = theta1;
-                msg->theta2 = theta2;
+                msg->theta1 = core.state.theta1;
+                msg->theta2 = core.state.theta2;
                 msg->theme = theme.load(std::memory_order_relaxed);
                 rightExpander.messageFlipRequested = true;
             }
         }
 
         // Publish to UI (relaxed: need atomicity, not ordering)
-        dispTheta1.store(theta1, std::memory_order_relaxed);
-        dispTheta2.store(theta2, std::memory_order_relaxed);
+        dispTheta1.store(core.state.theta1, std::memory_order_relaxed);
+        dispTheta2.store(core.state.theta2, std::memory_order_relaxed);
 
-        // Outputs
-        renderOutputs(args.sampleTime);
+        outputs[OUTPUT_1].setVoltage(core.outputs.smooth1);
+        outputs[OUTPUT_2].setVoltage(core.outputs.discrete1);
+        outputs[OUTPUT_3].setVoltage(core.outputs.discrete2);
+        outputs[OUTPUT_4].setVoltage(core.outputs.smooth2);
     }
 
     void onReset(const ResetEvent& e) override {
@@ -609,7 +170,7 @@ struct OhMyPendulum : Module {
     }
 
     void processBypass(const ProcessArgs& args) override {
-        slewOut1 = slewOut2 = slewOut3 = slewOut4 = 0.f;
+        core.outputs.reset();
         for (int i = 0; i < OUTPUTS_LEN; i++) {
             outputs[i].setVoltage(0.f);
         }

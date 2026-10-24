@@ -1,30 +1,12 @@
 // Rack-free checks for the expander's geometry and CV contract.
-#include "dsp/ArmKinematics.hpp"
+#include "TestHarness.hpp"
+
 #include "dsp/Angle.hpp"
+#include "dsp/ArmKinematics.hpp"
 #include "ExpanderMessage.hpp"
 #include "Theme.hpp"
 
-#include <cmath>
-#include <cstdio>
 #include <cstring>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-static int failures = 0;
-
-#define CHECK(cond) \
-    do { \
-        if (!(cond)) { \
-            std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-            failures++; \
-        } \
-    } while (0)
-
-static bool near(double a, double b) {
-    return std::fabs(a - b) < 1e-9;
-}
 
 static void testArmPoints() {
     ArmPoints p = computeArmPoints(0.0, 0.0);
@@ -117,18 +99,11 @@ static void testThemeTable() {
     }
 }
 
-int main() {
+void testExpanderMath() {
     testArmPoints();
     testVoltageScale();
     testCvMapping();
     testCoordinateBounds();
     testAngleWrap();
     testThemeTable();
-
-    if (failures) {
-        std::printf("%d check(s) failed\n", failures);
-        return 1;
-    }
-    std::printf("all checks passed\n");
-    return 0;
 }
