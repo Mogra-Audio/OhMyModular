@@ -52,10 +52,20 @@ jobs:
             exit 1
           fi
 
+          notes_file="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "${notes_file}" ]; then
+            notes_args=(--notes-file "${notes_file}")
+          else
+            notes_args=(--generate-notes)
+          fi
+
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
+            if [ -f "${notes_file}" ]; then
+              gh release edit "${GITHUB_REF_NAME}" --notes-file "${notes_file}"
+            fi
           else
             gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
               --title "OhMyModular ${GITHUB_REF_NAME}" \
-              --generate-notes
+              "${notes_args[@]}"
           fi
