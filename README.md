@@ -23,7 +23,9 @@
 
 ## About
 
-OhMyModular is a small, open-source collection of VCV Rack modules by Mogra Audio. The first release contains two modules: OhMyPendulum, a chaotic CV generator built on a real-time double pendulum simulation, and OhMyPendulum Expander, which adds CV control and Cartesian outputs to it.
+**OhMyModular** is an open-source collection of VCV Rack modules by Mogra Audio. 
+<br>
+The initial release contains two modules: **OhMyPendulum**, a chaotic CV generator built on a real-time double pendulum simulation, and **OhMyPendulum Expander**, which adds CV control and Cartesian outputs to it.
 
 ---
 
@@ -184,8 +186,8 @@ the Free Software Foundation, either version 3 of the License, or
 
 ## Contact
 
-- GitHub: [Mogra Audio](https://github.com/Mogra-Audio)
-- Support the project: [Boosty](https://boosty.to/keithrose/donate)
+- [Mogra Audio](https://github.com/Mogra-Audio)
+- [Support the project](https://boosty.to/keithrose/donate)
 
 ---
 
