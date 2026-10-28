@@ -64,9 +64,7 @@ OhMyPendulum Expander is a 6 HP module that attaches to the right of OhMyPendulu
 
 ## Installation
 
-### NOTICE
-
-OhMyModular is not in the VCV Library yet. Once it is accepted, installing from the Library will be the recommended way to keep it up to date.
+Add the modules on [VCV Library](https://library.vcvrack.com/?brand=Mogra%20Audio) and open VCV Rack — they will be installed automatically.
 
 ### Release builds
 
